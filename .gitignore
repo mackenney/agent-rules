@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.js.map
+.agent-rules-cache/
+*.db
+test-repo/.git/
+logs/
+plans/
+.venv/

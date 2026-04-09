@@ -1,0 +1,31 @@
+version = "1"
+inherit_mode = "merge"
+
+[[rules]]
+id = "api/auth-required"
+name = "Auth Decorator Required on Endpoints"
+severity = "error"
+glob-include = ["src/api/controllers/**/*.py"]
+prompt = """
+Check if HTTP endpoint functions in this file have authentication
+decorators. Every route handler must have @require_auth, @login_required,
+or equivalent authentication guard.
+
+Look for: @app.route, @router.get, @router.post etc. without auth decorator
+
+False positive: endpoints explicitly marked @public or @allow_unauthenticated
+"""
+
+
+[[rules]]
+id = "security/no-raw-sql"
+name = "No Raw SQL in API Layer"
+severity = "error"
+glob-include = ["**/*.py"]
+prompt = """
+Check for raw SQL string construction in this API file.
+The API layer must use the ORM or repository pattern.
+
+Violations: f"SELECT * FROM {table}", "INSERT INTO " + name
+Safe: User.objects.filter(), db.query(User).filter()
+"""

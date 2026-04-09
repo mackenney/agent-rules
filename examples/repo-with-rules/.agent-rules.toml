@@ -1,0 +1,43 @@
+version = "1"
+
+[[rules]]
+id = "security/no-hardcoded-secrets"
+name = "No Hardcoded Secrets"
+severity = "error"
+glob-include = ["**/*.py", "**/*.js", "**/*.ts"]
+prompt = """
+Check if this file contains hardcoded secrets, API keys, passwords,
+or tokens. Look for:
+- Variable names like: password, secret, api_key, token, passwd
+- String literals that look like API keys (long random alphanumeric strings)
+- Hardcoded connection strings with credentials
+
+False positives (DO NOT flag):
+- Environment variable lookups: os.environ.get("SECRET_KEY")
+- Placeholder values: "YOUR_API_KEY_HERE", "changeme"
+- Test fixtures with obviously fake values
+"""
+
+[[rules.examples]]
+description = "Hardcoded API key"
+code = 'API_KEY = "sk-1234abcd5678efgh"'
+verdict = "fail"
+
+[[rules.examples]]
+description = "Read from environment"
+code = 'API_KEY = os.environ.get("OPENAI_API_KEY")'
+verdict = "pass"
+
+
+[[rules]]
+id = "quality/no-print-statements"
+name = "No Debug Print Statements"
+severity = "warn"
+glob-include = ["src/**/*.py"]
+prompt = """
+Check if this file contains bare print() statements used for debugging.
+Use a logger instead.
+
+Violations: print("debug:", value), print(f"got: {x}")
+OK: print() in CLI tools, scripts in bin/, __main__ blocks
+"""

@@ -1,0 +1,62 @@
+name: agent-rules
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write  # required for posting PR comments
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history needed for git diff
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - run: npm ci
+
+      # Restore the verdict cache from previous runs on this PR.
+      # Falls back to caches from the base branch so the first run on a new PR
+      # already benefits from any files that haven't changed.
+      - name: Restore cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .agent-rules-cache
+          key: agent-rules-${{ github.sha }}
+          restore-keys: |
+            agent-rules-${{ github.event.pull_request.base.sha }}-
+            agent-rules-
+
+      - name: Run agent-rules
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          npx agent-rules check \
+            --base "${{ github.event.pull_request.base.sha }}" \
+            --head "${{ github.event.pull_request.head.sha }}" \
+            --pr   "${{ github.event.pull_request.html_url }}" \
+            --post-comment \
+            --fail-on reject
+        # Exit codes:
+        #   0  all pass (or warnings with --fail-on reject)
+        #   1  warnings found (only with --fail-on warn)
+        #   2  reject verdict — blocks CI
+        #   3  configuration / runtime error — blocks CI
+
+      # Save the updated cache even when the check step failed (so verdicts for
+      # passing files are kept for the next run).
+      - name: Save cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .agent-rules-cache
+          key: agent-rules-${{ github.sha }}
