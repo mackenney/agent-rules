@@ -378,6 +378,7 @@ mod tests {
             rules_passed: 8,
             rules_failed: 2,
             cache_hits: 1,
+            duration_ms: 0,
         }
     }
 
@@ -426,7 +427,11 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    #[allow(deprecated)]
     fn reporter_stylesheet_color_disabled_by_no_color() {
+        // SAFETY: This test sets NO_COLOR env var. Tests run in separate processes by default
+        // in cargo test, but parallel threads within a process share env. Acceptable for now.
         std::env::set_var("NO_COLOR", "1");
         let style = Stylesheet::new(true);
         assert!(!style.enabled);

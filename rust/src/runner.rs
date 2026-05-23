@@ -26,12 +26,12 @@ pub struct CheckInfra {
 }
 
 impl CheckInfra {
-    pub fn new(api_key: String, no_cache: bool) -> Result<Self> {
+    pub fn new(api_key: String, no_cache: bool, repo_root: &std::path::Path) -> Result<Self> {
         let llm = Arc::new(AnthropicClient::new(api_key));
         let cache: Arc<dyn Cache> = if no_cache {
             Arc::new(NullCache)
         } else {
-            Arc::new(CacheManager::new()?)
+            Arc::new(CacheManager::new(repo_root)?)
         };
 
         Ok(Self {
@@ -209,7 +209,7 @@ fn build_pr_report(
     head_ref: String,
     pr_url: Option<String>,
     files: Vec<FileVerdict>,
-    _duration_ms: u64,
+    duration_ms: u64,
 ) -> PRReport {
     let files_checked = files.iter().filter(|f| !f.skipped).count();
     let files_skipped = files.iter().filter(|f| f.skipped).count();
@@ -250,6 +250,7 @@ fn build_pr_report(
         rules_passed,
         rules_failed,
         cache_hits,
+        duration_ms,
     }
 }
 

@@ -64,13 +64,26 @@ pub enum RuleContext {
 }
 
 /// Example for a rule (pass/fail demonstration)
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RuleExample {
     pub code: String,
-    #[serde(default)]
-    pub should_pass: bool,
-    #[serde(default)]
-    pub explanation: String,
+    /// Serde alias supports both "verdict" (TS format) and the older field name
+    #[serde(default = "default_example_verdict", alias = "verdict")]
+    pub verdict: ExampleVerdict,
+    #[serde(default, alias = "description")]
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ExampleVerdict {
+    #[default]
+    Pass,
+    Fail,
+}
+
+fn default_example_verdict() -> ExampleVerdict {
+    ExampleVerdict::Pass
 }
 
 /// A rule file (.agent-rules.toml) containing rules and config
@@ -254,6 +267,8 @@ pub struct PRReport {
     pub rules_passed: usize,
     pub rules_failed: usize,
     pub cache_hits: usize,
+    #[serde(default)]
+    pub duration_ms: u64,
 }
 
 /// File diff data for passing to LLM

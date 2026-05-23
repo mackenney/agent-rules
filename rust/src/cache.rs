@@ -96,9 +96,9 @@ pub struct CacheManager {
 }
 
 impl CacheManager {
-    /// Create a new cache manager with the default cache directory
-    pub fn new() -> Result<Self> {
-        Self::with_dir(get_cache_dir())
+    /// Create a new cache manager using the project-local cache directory
+    pub fn new(repo_root: &std::path::Path) -> Result<Self> {
+        Self::with_dir(get_cache_dir(repo_root))
     }
 
     /// Create a cache manager with a specific directory
@@ -248,12 +248,6 @@ impl Cache for CacheManager {
         model: &str,
     ) -> String {
         compute_cache_key(file_path, content, diff, rules, model)
-    }
-}
-
-impl Default for CacheManager {
-    fn default() -> Self {
-        Self::new().expect("failed to create cache manager")
     }
 }
 

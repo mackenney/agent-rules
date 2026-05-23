@@ -106,7 +106,7 @@ struct CheckArgs {
     no_cache: bool,
 
     /// Model for stateless evaluation
-    #[arg(long, default_value = "claude-haiku-4-5")]
+    #[arg(long, default_value = config::DEFAULT_MODEL)]
     model: String,
 
     /// Max concurrent stateless LLM calls
@@ -275,7 +275,7 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         eprintln!("Note: --strict-rules is not yet implemented; ignoring");
     }
 
-    let infra = CheckInfra::new(api_key, config.no_cache)?;
+    let infra = CheckInfra::new(api_key, config.no_cache, &config.repo_root)?;
 
     let infra = if config.output_format == OutputFormat::Json {
         infra.with_progress(Arc::new(NullProgress))
@@ -299,8 +299,12 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
 
 fn run_cache(command: CacheCommands, colors: &Stylesheet) -> Result<i32> {
     match command {
-        CacheCommands::Stats { repo: _ } => {
-            let cache = CacheManager::new()?;
+        CacheCommands::Stats { repo } => {
+            let repo_root = match repo {
+                Some(r) => r,
+                None => get_repo_root(&std::env::current_dir()?)?,
+            };
+            let cache = CacheManager::new(&repo_root)?;
             let stats = cache.stats()?;
 
             println!("{}", "Cache Statistics".bold());
@@ -326,7 +330,11 @@ fn run_cache(command: CacheCommands, colors: &Stylesheet) -> Result<i32> {
 
             Ok(0)
         }
-        CacheCommands::Clear { repo: _, yes } => {
+        CacheCommands::Clear { repo, yes } => {
+            let repo_root = match repo {
+                Some(r) => r,
+                None => get_repo_root(&std::env::current_dir()?)?,
+            };
             if !yes {
                 eprint!("Clear all cache entries? [y/N] ");
                 std::io::Write::flush(&mut std::io::stderr())?;
@@ -340,7 +348,7 @@ fn run_cache(command: CacheCommands, colors: &Stylesheet) -> Result<i32> {
                 }
             }
 
-            let cache = CacheManager::new()?;
+            let cache = CacheManager::new(&repo_root)?;
             let count = cache.clear()?;
 
             println!(

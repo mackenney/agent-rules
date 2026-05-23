@@ -2,7 +2,7 @@
 //!
 //! Defines CheckConfig with all tunable parameters and their defaults.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Default model for stateless evaluation
 pub const DEFAULT_MODEL: &str = "claude-haiku-4-5";
@@ -116,18 +116,9 @@ impl std::str::FromStr for OutputFormat {
     }
 }
 
-/// Get the cache directory path
-pub fn get_cache_dir() -> PathBuf {
-    // Use XDG cache dir or ~/.cache
-    if let Some(cache) = dirs::cache_dir() {
-        cache.join("agent-rules")
-    } else {
-        // Fallback to home directory
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".cache")
-            .join("agent-rules")
-    }
+/// Get the cache directory path (project-local, compatible with TypeScript)
+pub fn get_cache_dir(repo_root: &Path) -> PathBuf {
+    repo_root.join(".agent-rules-cache")
 }
 
 /// Get API key from environment
