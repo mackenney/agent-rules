@@ -145,6 +145,26 @@ impl std::fmt::Display for ResolvedVerdict {
     }
 }
 
+/// Overall verdict for a PR report
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OverallVerdict {
+    #[default]
+    Pass,
+    Warn,
+    Fail,
+}
+
+impl std::fmt::Display for OverallVerdict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OverallVerdict::Pass => write!(f, "pass"),
+            OverallVerdict::Warn => write!(f, "warn"),
+            OverallVerdict::Fail => write!(f, "fail"),
+        }
+    }
+}
+
 /// Verdict for a single rule on a single file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleVerdict {
@@ -222,11 +242,18 @@ impl FileVerdict {
 pub struct PRReport {
     pub base_ref: String,
     pub head_ref: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pr_url: Option<String>,
     pub files: Vec<FileVerdict>,
-    pub passed: bool,
-    pub total_rules_run: usize,
-    pub total_failures: usize,
-    pub cached_count: usize,
+    pub overall_verdict: OverallVerdict,
+    pub files_checked: usize,
+    pub files_passed: usize,
+    pub files_failed: usize,
+    pub files_skipped: usize,
+    pub rules_evaluated: usize,
+    pub rules_passed: usize,
+    pub rules_failed: usize,
+    pub cache_hits: usize,
 }
 
 /// File diff data for passing to LLM
