@@ -19,6 +19,7 @@ import { AgenticOpts, runStateless, runAgenticEscalation } from "./llm.js";
 import { parseVerdicts } from "./verdict-parser.js";
 
 export const DEFAULT_MAX_CONCURRENT = DEFAULTS.maxConcurrent;
+export const DEFAULT_MAX_AGENTIC_CONCURRENT = DEFAULTS.maxAgenticConcurrent;
 export const DEFAULT_TIMEOUT_MS = DEFAULTS.timeoutMs;
 export const DEFAULT_AGENTIC_TIMEOUT_MS = DEFAULTS.agenticTimeoutMs;
 
@@ -50,6 +51,8 @@ export interface CheckConfig {
   timeoutMs?: number;
   /** Max concurrent LLM calls in checkPr (default: 10) */
   maxConcurrent?: number;
+  /** Max concurrent agentic escalations (default: 2) */
+  maxAgenticConcurrent?: number;
   /** Log prompts and responses to stderr (default: false) */
   trace?: boolean;
   /** Agentic escalation configuration */
@@ -86,7 +89,9 @@ export async function checkFile(
   infra: CheckInfra,
   config: CheckConfig = {},
   cacheSystemPrompt: boolean = false,
-  cacheFileContext: boolean = false
+  cacheFileContext: boolean = false,
+  agenticSemaphore?: ReturnType<typeof createSemaphore>,
+  releaseStateless?: () => void,
 ): Promise<FileVerdict> {
   const { client, cache, progress } = infra;
   const model = config.model ?? DEFAULTS.statelessModel;
@@ -99,14 +104,15 @@ export async function checkFile(
   };
   const startMs = Date.now();
 
-  const cacheKey = cache.keyFor(request);
+  const cacheKey = cache.keyFor(request, model);
   const cached = cache.get(cacheKey);
   if (cached) return cached;
 
   const ruleLabel = `${request.file_path} [${request.rules[0]?.id ?? "?"}]`;
   progress?.onCallStart(ruleLabel);
 
-  const statelessVerdicts = await runStateless(client, request, model, timeoutMs, cacheSystemPrompt, cacheFileContext, trace);
+  const statelessVerdicts = await runStateless(client, request, model, timeoutMs, cacheSystemPrompt, cacheFileContext, trace, progress);
+  releaseStateless?.();
   progress?.onCallDone(ruleLabel);
 
   const terminalVerdicts: RuleVerdict[] = [];
@@ -141,16 +147,21 @@ export async function checkFile(
     const agenticLabel = `${request.file_path} [${rule.id}] [agentic]`;
     progress?.addTotal(1);
     progress?.onCallStart(agenticLabel);
-    const verdicts = await runAgenticEscalation(
-      { ...request, rules: [rule] },
-      [rule],
-      ruleHints,
-      agenticOpts,
-      progress,
-      trace
-    );
+    await agenticSemaphore?.acquire();
+    try {
+      const verdicts = await runAgenticEscalation(
+        { ...request, rules: [rule] },
+        [rule],
+        ruleHints,
+        agenticOpts,
+        progress,
+        trace
+      );
+      agenticVerdicts.push(...verdicts);
+    } finally {
+      agenticSemaphore?.release();
+    }
     progress?.onCallDone(agenticLabel);
-    agenticVerdicts.push(...verdicts);
   }
 
   const allVerdicts = [...terminalVerdicts, ...agenticVerdicts];
@@ -177,12 +188,14 @@ export async function checkPr(
   const { client, cache, progress } = infra;
   const model = config.model ?? DEFAULTS.statelessModel;
   const maxConcurrent = config.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
+  const maxAgenticConcurrent = config.maxAgenticConcurrent ?? DEFAULT_MAX_AGENTIC_CONCURRENT;
   const trace = config.trace ?? false;
   const prUrl = meta.prUrl ?? null;
   const baseRef = meta.baseRef ?? "HEAD~1";
   const headRef = meta.headRef ?? "HEAD";
   const startMs = Date.now();
   const semaphore = createSemaphore(maxConcurrent);
+  const agenticSemaphore = createSemaphore(maxAgenticConcurrent);
 
   // Flatten to one (file, rule) task per rule across all files.
   // Each task becomes a single LLM call so the model gives full attention to one rule.
@@ -200,10 +213,16 @@ export async function checkPr(
   const ruleResults = await Promise.all(
     ruleTasks.map(async ({ req, cacheFileCtx }) => {
       await semaphore.acquire();
+      // releaseStateless lets checkFile free this slot as soon as the stateless
+      // pass completes, before any agentic escalation begins.
+      let released = false;
+      const releaseStateless = () => {
+        if (!released) { released = true; semaphore.release(); }
+      };
       try {
-        return await checkFile(req, infra, config, cacheSystemPrompt, cacheFileCtx);
+        return await checkFile(req, infra, config, cacheSystemPrompt, cacheFileCtx, agenticSemaphore, releaseStateless);
       } finally {
-        semaphore.release();
+        releaseStateless();
       }
     })
   );

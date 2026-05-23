@@ -2,6 +2,7 @@ export const DEFAULTS = {
   statelessModel: "claude-haiku-4-5",
   agenticModel: "claude-sonnet-4-6",
   maxConcurrent: 10,
+  maxAgenticConcurrent: 2,
   timeoutMs: 60_000,
   agenticTimeoutMs: 180_000,
   maxStatelessTokens: 2048,

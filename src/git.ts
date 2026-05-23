@@ -118,3 +118,12 @@ function runGit(args: string[], cwd: string): string {
     throw new Error(`git ${args.join(" ")} failed: ${e.stderr?.trim() ?? e.message}`);
   }
 }
+
+/** Read a file from a specific git ref. Returns null if the ref or path does not exist. */
+export function getFileAtRef(relPath: string, ref: string, repoRoot: string): string | null {
+  try {
+    return runGit(["show", `${ref}:${relPath}`], resolve(repoRoot));
+  } catch {
+    return null;
+  }
+}

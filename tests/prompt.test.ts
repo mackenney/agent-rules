@@ -207,8 +207,9 @@ describe("STATELESS_SYSTEM_PROMPT", () => {
     expect(STATELESS_SYSTEM_PROMPT.length).toBeGreaterThan(0);
   });
 
-  it("describes the expected JSON schema", () => {
+  it("describes verdict meanings and field guidance", () => {
     expect(STATELESS_SYSTEM_PROMPT).toContain("verdict");
-    expect(STATELESS_SYSTEM_PROMPT).toContain("reasoning");
+    expect(STATELESS_SYSTEM_PROMPT).toContain("submit_verdict");
+    expect(STATELESS_SYSTEM_PROMPT).toContain("confidence");
   });
 });

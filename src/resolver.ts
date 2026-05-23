@@ -1,12 +1,19 @@
-import { existsSync, statSync, readdirSync } from "node:fs";
+import { existsSync, statSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve, relative, dirname } from "node:path";
 import micromatch from "micromatch";
-import { loadRuleFile, allRules } from "./parser.js";
+import { parseRuleFileContent, allRules } from "./parser.js";
 import { Rule, RuleFile } from "./schema.js";
-
+import { getFileAtRef } from "./git.js";
 export const RULE_FILE_NAME = ".agent-rules.toml";
 
-export function resolveRules(filePath: string, repoRoot: string): Rule[] {
+export interface ResolveRulesOpts {
+  /** Git ref to load rule files from. When provided, disk versions are compared and divergence is warned. */
+  headRef?: string;
+  /** Treat on-disk rule files that differ from headRef as a hard error instead of a warning. */
+  strictRules?: boolean;
+}
+
+export function resolveRules(filePath: string, repoRoot: string, opts: ResolveRulesOpts = {}): Rule[] {
   const absRepoRoot = resolve(repoRoot);
 
   let absFile: string;
@@ -19,8 +26,36 @@ export function resolveRules(filePath: string, repoRoot: string): Rule[] {
   const ruleFilePaths = findRuleFiles(absFile, absRepoRoot);
   const ruleFiles: RuleFile[] = [];
   for (const rp of ruleFilePaths) {
+    const rel = relative(absRepoRoot, rp).replace(/\\/g, "/");
+    let content: string | null = null;
+
+    if (opts.headRef) {
+      const gitContent = getFileAtRef(rel, opts.headRef, absRepoRoot);
+      let diskContent: string | null = null;
+      try { diskContent = readFileSync(rp, "utf-8"); } catch { /* not on disk */ }
+
+      if (gitContent !== null && diskContent !== null) {
+        if (gitContent.trimEnd() !== diskContent.trimEnd()) {
+          const msg = `${RULE_FILE_NAME} at ${rel} on disk differs from ${opts.headRef}`;
+          if (opts.strictRules) throw new Error(`strict-rules: ${msg}`);
+          process.stderr.write(`warning: ${msg}\n`);
+        }
+        content = gitContent;
+      } else if (gitContent !== null) {
+        content = gitContent;
+      } else if (diskContent !== null) {
+        const msg = `${RULE_FILE_NAME} at ${rel} not found at ${opts.headRef}, using disk version`;
+        if (opts.strictRules) throw new Error(`strict-rules: ${msg}`);
+        process.stderr.write(`warning: ${msg}\n`);
+        content = diskContent;
+      }
+    } else {
+      try { content = readFileSync(rp, "utf-8"); } catch { /* skip */ }
+    }
+
+    if (content === null) continue;
     try {
-      ruleFiles.push(loadRuleFile(rp));
+      ruleFiles.push(parseRuleFileContent(content, rp));
     } catch (err) {
       process.stderr.write(`warning: skipping ${rp}: ${(err as Error).message}\n`);
     }

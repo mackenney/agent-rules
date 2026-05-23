@@ -30,19 +30,12 @@ function formatValidationError(path: string, err: unknown): Error {
   return err instanceof Error ? err : new Error(String(err));
 }
 
-export function loadRuleFile(path: string): RuleFile {
-  let text: string;
-  try {
-    text = readFileSync(path, "utf-8");
-  } catch (err) {
-    throw new Error(`Cannot read rule file '${path}': ${(err as Error).message}`);
-  }
-
+export function parseRuleFileContent(text: string, sourcePath: string): RuleFile {
   let raw: Record<string, unknown>;
   try {
     raw = parseToml(text) as Record<string, unknown>;
   } catch (err) {
-    throw new Error(`TOML parse error in '${path}': ${(err as Error).message}`);
+    throw new Error(`TOML parse error in '${sourcePath}': ${(err as Error).message}`);
   }
 
   const rawRules = (raw["rules"] as Record<string, unknown>[] | undefined) ?? [];
@@ -52,27 +45,37 @@ export function loadRuleFile(path: string): RuleFile {
   try {
     ruleFile = RuleFileSchema.parse(raw);
   } catch (err) {
-    throw formatValidationError(path, err);
+    throw formatValidationError(sourcePath, err);
   }
 
   ruleFile.rules = rawRules.map((r) => {
     try {
       return buildRule(r);
     } catch (err) {
-      throw formatValidationError(path, err);
+      throw formatValidationError(sourcePath, err);
     }
   });
 
   const ids = new Set<string>();
   for (const rule of ruleFile.rules) {
     if (ids.has(rule.id)) {
-      throw new Error(`Duplicate rule id '${rule.id}' in ${path}`);
+      throw new Error(`Duplicate rule id '${rule.id}' in ${sourcePath}`);
     }
     ids.add(rule.id);
   }
 
-  ruleFile.source_path = path;
+  ruleFile.source_path = sourcePath;
   return ruleFile;
+}
+
+export function loadRuleFile(path: string): RuleFile {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf-8");
+  } catch (err) {
+    throw new Error(`Cannot read rule file '${path}': ${(err as Error).message}`);
+  }
+  return parseRuleFileContent(text, path);
 }
 
 export function allRules(ruleFile: RuleFile): Rule[] {

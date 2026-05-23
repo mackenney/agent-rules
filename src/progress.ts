@@ -7,6 +7,8 @@ export interface ProgressReporter {
   onCallDone(label: string): void;
   /** Dynamically grow the total when an agentic escalation is discovered. */
   addTotal(n: number): void;
+  /** Write a diagnostic line without corrupting the spinner. */
+  log(msg: string): void;
   /** Flush final line and stop the spinner. */
   stop(): void;
 }
@@ -24,7 +26,7 @@ export function createProgressReporter(total: number): ProgressReporter {
   const isCI = !!process.env["CI"] || !!process.env["GITHUB_ACTIONS"];
 
   if (total === 0 || (!isTTY && !isCI)) {
-    return { onCallStart: () => {}, onCallDone: () => {}, addTotal: () => {}, stop: () => {} };
+    return { onCallStart: () => {}, onCallDone: () => {}, addTotal: () => {}, log: (msg) => process.stderr.write(msg + "\n"), stop: () => {} };
   }
 
   let currentTotal = total;
@@ -38,6 +40,7 @@ export function createProgressReporter(total: number): ProgressReporter {
         process.stderr.write(`[${done}/${currentTotal}] ${label}\n`);
       },
       addTotal: (n) => { currentTotal += n; },
+      log: (msg) => process.stderr.write(msg + "\n"),
       stop: () => {},
     };
   }
@@ -69,6 +72,9 @@ export function createProgressReporter(total: number): ProgressReporter {
     },
     addTotal(n) {
       currentTotal += n;
+    },
+    log(msg) {
+      process.stderr.write(`\r\x1b[K${msg}\n`);
     },
     stop() {
       clearInterval(timer);

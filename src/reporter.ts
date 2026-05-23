@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { PRReport, FileVerdict, RuleVerdict, DisplayVerdict, fileVerdictOverall, prReportOverallVerdict, effectiveSeverity } from "./schema.js";
 export type { ProgressReporter } from "./progress.js";
@@ -50,7 +51,7 @@ function renderConcise(fv: FileVerdict, rv: RuleVerdict): string {
  * Annotate-snippets style block — mirrors ruff/rustc full diagnostic format.
  * Reads source lines from disk when available to render the ^^^ underline.
  */
-function renderFull(fv: FileVerdict, rv: RuleVerdict, repoRoot?: string): string {
+function renderFull(fv: FileVerdict, rv: RuleVerdict, repoRoot?: string, headRef?: string): string {
   const display = effectiveSeverity(rv);
   const level = displaySev(display);
   const severity = level === "error" ? sev.error("error") : sev.warning("warning");
@@ -73,10 +74,18 @@ function renderFull(fv: FileVerdict, rv: RuleVerdict, repoRoot?: string): string
     // Try to load source for context
     let sourceLines: string[] | null = null;
     try {
-      const absPath = repoRoot ? join(repoRoot, fv.file_path) : fv.file_path;
-      sourceLines = readFileSync(absPath, "utf-8").split("\n");
+      if (repoRoot && headRef) {
+        const raw = execFileSync("git", ["show", `${headRef}:${fv.file_path}`], {
+          cwd: repoRoot,
+          encoding: "utf-8",
+        });
+        sourceLines = raw.split("\n");
+      } else {
+        const absPath = repoRoot ? join(repoRoot, fv.file_path) : fv.file_path;
+        sourceLines = readFileSync(absPath, "utf-8").split("\n");
+      }
     } catch {
-      // file not readable — show location header only
+      // file not readable from git or disk — show location header only
     }
 
     if (sourceLines) {
@@ -135,8 +144,9 @@ export function printReport(report: PRReport, verbose: boolean = false, repoRoot
   if (violations.length === 0) {
     console.log(chalk.green("All checks passed."));
   } else if (verbose) {
+    const headRef = report.head_ref || undefined;
     for (const { fv, rv } of violations) {
-      process.stdout.write(renderFull(fv, rv, repoRoot) + "\n");
+      process.stdout.write(renderFull(fv, rv, repoRoot, headRef) + "\n");
     }
   } else {
     for (const { fv, rv } of violations) {

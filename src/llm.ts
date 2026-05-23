@@ -11,8 +11,6 @@ import {
   AuthStorage,
   createAgentSession,
   SessionManager,
-  createReadOnlyTools,
-  createBashTool,
   type AgentSessionEvent,
 } from "@mariozechner/pi-coding-agent";
 import { getModel } from "@mariozechner/pi-ai";
@@ -29,6 +27,83 @@ import { parseVerdicts } from "./verdict-parser.js";
 
 const MAX_RETRIES = 3;
 const RETRY_BASE_DELAY_MS = 1000;
+
+const VERDICT_TOOL: Anthropic.Tool = {
+  name: "submit_verdict",
+  description: "Submit the rule evaluation verdict as structured data.",
+  input_schema: {
+    type: "object" as const,
+    properties: {
+      reasoning: {
+        type: "string",
+        description: "1-3 sentences explaining the verdict, referencing specific code.",
+      },
+      line_refs: {
+        type: "array",
+        items: { type: "integer" },
+        description: "Absolute line numbers of violations. Empty array for pass.",
+      },
+      context_hint: {
+        type: "object",
+        description: "Required only when verdict is needs-more-context.",
+        properties: {
+          read_files: { type: "array", items: { type: "string" } },
+          question: { type: "string" },
+        },
+        required: ["read_files", "question"],
+      },
+      confidence: {
+        type: "number",
+        description: "Certainty 0.0–1.0. Use < 0.7 when genuinely ambiguous.",
+      },
+      verdict: {
+        type: "string",
+        enum: ["pass", "fail", "needs-more-context"],
+      },
+    },
+    required: ["reasoning", "line_refs", "confidence", "verdict"],
+  },
+};
+
+function buildVerdictFromToolInput(
+  input: Record<string, unknown>,
+  request: FileCheckRequest,
+  fromAgentic = false,
+): RuleVerdict {
+  const rule = request.rules[0]!;
+  const rawVerdict = input["verdict"] as string;
+  const verdict: Verdict = ["pass", "fail", "needs-more-context"].includes(rawVerdict)
+    ? (rawVerdict as Verdict)
+    : "fail";
+
+  const rawHint = input["context_hint"];
+  const contextHint =
+    rawHint && typeof rawHint === "object"
+      ? {
+          read_files: Array.isArray((rawHint as Record<string, unknown>)["read_files"])
+            ? ((rawHint as Record<string, unknown>)["read_files"] as string[])
+            : [],
+          question:
+            typeof (rawHint as Record<string, unknown>)["question"] === "string"
+              ? ((rawHint as Record<string, unknown>)["question"] as string)
+              : "",
+        }
+      : null;
+
+  return {
+    rule_id: rule.id,
+    verdict,
+    rule_severity: rule.severity,
+    confidence: typeof input["confidence"] === "number" ? (input["confidence"] as number) : 0.5,
+    reasoning:
+      typeof input["reasoning"] === "string"
+        ? (input["reasoning"] as string).replace(/\n/g, " ").replace(/\r/g, "").trim()
+        : "",
+    line_refs: Array.isArray(input["line_refs"]) ? (input["line_refs"] as number[]) : [],
+    context_hint: contextHint,
+    from_agentic: fromAgentic,
+  };
+}
 
 /**
  * Internal agentic options with resolved values.
@@ -48,7 +123,8 @@ export async function runStateless(
   timeoutMs: number,
   cacheSystemPrompt: boolean = false,
   cacheFileContext: boolean = false,
-  trace: boolean = false
+  trace: boolean = false,
+  progress?: ProgressReporter,
 ): Promise<RuleVerdict[]> {
   const rule = request.rules[0]!;
   const fileContext = buildFileContext(request, rule);
@@ -81,25 +157,39 @@ export async function runStateless(
           max_tokens: DEFAULTS.maxStatelessTokens,
           system,
           messages: [{ role: "user", content: userContent }],
+          tools: [VERDICT_TOOL],
+          tool_choice: { type: "tool", name: "submit_verdict" },
         }),
         timeoutMs
       );
+      if (trace) {
+        const toolUseBlock = response.content.find((b) => b.type === "tool_use");
+        process.stderr.write(
+          `[TRACE] RESPONSE for ${request.file_path} [${request.rules[0]?.id ?? "?"}]:\n` +
+            JSON.stringify(toolUseBlock?.type === "tool_use" ? toolUseBlock.input : response.content, null, 2) + "\n"
+        );
+      }
+      const toolUse = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+      if (toolUse) {
+        return [buildVerdictFromToolInput(toolUse.input as Record<string, unknown>, request)];
+      }
+      // Fallback: model returned text despite forced tool_choice (should not happen)
       const rawText = response.content
         .filter((b): b is Anthropic.TextBlock => b.type === "text")
         .map((b) => b.text)
         .join("");
-      if (trace) {
-        process.stderr.write(`[TRACE] RESPONSE for ${request.file_path} [${request.rules[0]?.id ?? "?"}]:\n${rawText}\n`);
-      }
       return parseVerdicts(rawText, request);
     } catch (err) {
       const e = err as Error & { status?: number };
       if (e.message === "timeout") {
-        process.stderr.write(`Stateless pass timed out (attempt ${attempt + 1}/${MAX_RETRIES})\n`);
+        const msg = `Stateless pass timed out (attempt ${attempt + 1}/${MAX_RETRIES}) [${request.file_path}]`;
+        progress ? progress.log(msg) : process.stderr.write(msg + "\n");
       } else if (e.status === 429) {
-        process.stderr.write(`Rate limited (attempt ${attempt + 1}/${MAX_RETRIES})\n`);
+        const msg = `Rate limited (attempt ${attempt + 1}/${MAX_RETRIES}) [${request.file_path}]`;
+        progress ? progress.log(msg) : process.stderr.write(msg + "\n");
       } else if (e.status !== undefined && e.status >= 500) {
-        process.stderr.write(`API server error ${e.status} (attempt ${attempt + 1}/${MAX_RETRIES})\n`);
+        const msg = `API server error ${e.status} (attempt ${attempt + 1}/${MAX_RETRIES}) [${request.file_path}]`;
+        progress ? progress.log(msg) : process.stderr.write(msg + "\n");
       } else {
         throw err;
       }
@@ -130,8 +220,8 @@ export async function runAgenticEscalation(
   const repoRoot = resolve(request.repo_root);
 
   const tools = opts.allowBash
-    ? [...createReadOnlyTools(repoRoot), createBashTool(repoRoot)]
-    : createReadOnlyTools(repoRoot);
+    ? ["read", "grep", "find", "ls", "bash"]
+    : ["read", "grep", "find", "ls"];
 
   const model = getModel("anthropic", opts.model as Parameters<typeof getModel>[1]);
   if (!model) throw new Error(`Unknown model: ${opts.model}`);
@@ -192,7 +282,34 @@ export async function runAgenticEscalation(
     process.stderr.write(`[TRACE] AGENTIC RESPONSE for ${request.file_path}:\n${rawAgenticText}\n`);
   }
   const subRequest: FileCheckRequest = { ...request, rules: escalatedRules };
-  const verdicts = parseVerdicts(rawAgenticText, subRequest);
+  let verdicts = parseVerdicts(rawAgenticText, subRequest);
+
+  // If the agent's final message wasn't parseable JSON, normalize via a single tool-use call.
+  if (verdicts[0]?.reasoning === "JSON parse error" || verdicts[0]?.reasoning === "Model returned unrecognised verdict") {
+    try {
+      const normClient = new Anthropic({ apiKey: process.env["ANTHROPIC_API_KEY"] ?? "" });
+      const normResponse = await normClient.messages.create({
+        model: opts.model,
+        max_tokens: 1024,
+        system: "Extract a structured rule evaluation verdict from the agent's analysis. The agent has already done the investigation.",
+        messages: [{
+          role: "user",
+          content:
+            `File: ${request.file_path}\nRule: ${escalatedRules[0].id} — ${escalatedRules[0].name}\n\n` +
+            `Agent analysis:\n${rawAgenticText.slice(0, 8000)}\n\nExtract the verdict.`,
+        }],
+        tools: [VERDICT_TOOL],
+        tool_choice: { type: "tool", name: "submit_verdict" },
+      });
+      const toolUse = normResponse.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+      if (toolUse) {
+        verdicts = [buildVerdictFromToolInput(toolUse.input as Record<string, unknown>, subRequest, true)];
+      }
+    } catch {
+      // normalization failed — keep the parse-error fallback verdict
+    }
+  }
+
   return verdicts.map((v) => ({
     ...v,
     verdict: v.verdict === "needs-more-context" ? ("fail" as Verdict) : v.verdict,

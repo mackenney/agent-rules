@@ -3,20 +3,7 @@ import { DEFAULTS } from "./config.js";
 
 export const STATELESS_SYSTEM_PROMPT = `\
 You are a code review agent. Your job is to evaluate a source file against a single rule
-and return a structured verdict.
-
-You MUST respond with valid JSON matching this exact schema:
-
-{
-  "reasoning": "<string: 1-3 sentences referencing specific code>",
-  "line_refs": [<integer line numbers>],
-  "context_hint": {
-    "read_files": ["<repo-relative paths>"],
-    "question": "<specific question those files would answer>"
-  },
-  "confidence": <float 0.0-1.0>,
-  "verdict": "<string: one of 'pass', 'fail', 'needs-more-context'>"
-}
+and call submit_verdict with your evaluation.
 
 Verdict meanings:
 - "pass": the code satisfies this rule. No violation found.
@@ -27,13 +14,11 @@ Verdict meanings:
   "fail" when in doubt.
   When emitting needs-more-context you MUST populate context_hint.
 
-Rules:
-- "confidence" reflects certainty. Use < 0.7 when genuinely ambiguous.
+Field guidance:
+- "confidence": certainty 0.0–1.0. Use < 0.7 when genuinely ambiguous.
 - "line_refs": absolute line numbers in the final file (from the numbered FULL FILE
   CONTENT block). These must match the " N | " prefix shown on each line. Empty for pass.
-- "context_hint" is required only for needs-more-context; omit it otherwise.
-- Do NOT include text before or after the JSON object.
-- Do NOT use markdown fences.
+- "context_hint": required only for needs-more-context.
 - If the rule doesn't apply to this file type, return "pass" with confidence 1.0.
 - Prefer concrete verdicts over needs-more-context when you have reasonable evidence.
 `;
@@ -148,7 +133,6 @@ export function buildRuleSection(rule: Rule): string {
   const parts: string[] = [];
   parts.push(`\nRULE TO EVALUATE:`);
   parts.push(serializeRule(rule));
-  parts.push("\nReturn a single JSON verdict object (not wrapped in an array).");
   return parts.join("\n");
 }
 

@@ -18,7 +18,7 @@ export interface CacheStats {
 export interface CacheInterface {
   get(cacheKey: string): FileVerdict | null;
   put(cacheKey: string, verdict: FileVerdict, model?: string): void;
-  keyFor(request: FileCheckRequest): string;
+  keyFor(request: FileCheckRequest, model: string): string;
   stats(): CacheStats;
   clear(): number;
 }
@@ -33,8 +33,8 @@ interface CacheEntry {
   verdict: FileVerdict;
 }
 
-function deriveKey(request: FileCheckRequest): string {
-  const parts: string[] = [`version:${CACHE_VERSION}`];
+function deriveKey(request: FileCheckRequest, model: string): string {
+  const parts: string[] = [`version:${CACHE_VERSION}`, `model:${model}`];
   const sortedRules = [...request.rules].sort((a, b) => a.id.localeCompare(b.id));
   for (const rule of sortedRules) {
     parts.push(`rule:${rule.id}:${rule.severity}:${rule.prompt.trim()}`);
@@ -54,8 +54,8 @@ export class CacheManager implements CacheInterface {
     this.cacheDir = cacheDir;
   }
 
-  keyFor(request: FileCheckRequest): string {
-    return deriveKey(request);
+  keyFor(request: FileCheckRequest, model: string): string {
+    return deriveKey(request, model);
   }
 
   private entryPath(key: string): string {
@@ -124,8 +124,8 @@ export class NullCache implements CacheInterface {
 
   put(_cacheKey: string, _verdict: FileVerdict, _model?: string): void {}
 
-  keyFor(request: FileCheckRequest): string {
-    return deriveKey(request);
+  keyFor(request: FileCheckRequest, model: string): string {
+    return deriveKey(request, model);
   }
 
   clear(): number {

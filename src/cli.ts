@@ -16,7 +16,7 @@ import {
 import { maybeWriteStepSummary, emitWorkflowAnnotations } from "./ci.js";
 import { resolveRules, findAllRuleFiles } from "./resolver.js";
 import { loadRuleFile, allRules } from "./parser.js";
-import { checkPr, type CheckInfra, type CheckConfig, type AgenticConfig, type PRMeta, DEFAULT_AGENTIC_TIMEOUT_MS } from "./runner.js";
+import { checkPr, type CheckInfra, type CheckConfig, type AgenticConfig, type PRMeta, DEFAULT_AGENTIC_TIMEOUT_MS, DEFAULT_TIMEOUT_MS } from "./runner.js";
 import { DEFAULTS } from "./config.js";
 import {
   FileCheckRequest,
@@ -48,20 +48,24 @@ program
   .description("Run rule checks against changed or specified files.")
   .option("--base <ref>", "Base git ref for diff", "main")
   .option("--head <ref>", "Head git ref", "HEAD")
-  .option("--pr <url>", "GitHub PR URL")
+  .option("--pr <url>", "GitHub PR URL for report labels and --post-comment (does not drive the diff)")
   .option("--files <paths...>", "Check specific files instead of git diff")
   .option("--repo <path>", "Repository root")
+  .option("--dir-filter <dirs...>", "Only check files under these directories (additive, comma-separated or repeated)")
   .option("--output <format>", "Output format: text, json, github", "text")
   .option("--warn-as-error", "Treat warn-severity violations as errors (exit 1 on warn)", false)
   .option("--no-cache", "Disable cache")
   .option("--model <name>", "Override LLM model", DEFAULTS.statelessModel)
-  .option("--max-concurrent <n>", "Max parallel LLM calls", String(DEFAULTS.maxConcurrent))
+  .option("--max-concurrent <n>", "Max parallel stateless LLM calls", String(DEFAULTS.maxConcurrent))
   .option("--verbose", "Show full diagnostic output with source context", false)
   .option("--trace", "Also print raw prompts and LLM responses to stderr (implies --verbose)", false)
   .option("--post-comment", "Post results as a GitHub PR comment", false)
   .option("--allow-bash", "Enable bash tool in agentic escalation", false)
+  .option("--timeout <ms>", "Timeout for stateless LLM calls in ms", String(DEFAULTS.timeoutMs))
   .option("--agentic-timeout <ms>", "Timeout for agentic escalation in ms", String(DEFAULTS.agenticTimeoutMs))
+  .option("--agentic-concurrency <n>", "Max parallel agentic escalations", String(DEFAULTS.maxAgenticConcurrent))
   .option("--agentic-model <model>", "Model for agentic escalation", DEFAULTS.agenticModel)
+  .option("--strict-rules", "Exit with error if any .agent-rules.toml on disk differs from the head ref", false)
   .action(async (opts) => {
     const repoRoot = getRepoRoot(opts.repo as string | undefined);
 
@@ -109,6 +113,23 @@ program
       }
     }
 
+    const rawDirFilters: string[] = ([] as string[])
+      .concat(opts.dirFilter ?? [])
+      .flatMap((d: string) => d.split(","))
+      .map((d: string) => d.trim())
+      .filter(Boolean);
+    const dirFilters = rawDirFilters.map((d) => {
+      const abs = isAbsolute(d) ? d : join(repoRoot, d);
+      return abs.endsWith("/") ? abs : abs + "/";
+    });
+
+    if (dirFilters.length > 0) {
+      fileDiffs = fileDiffs.filter((fd) => {
+        const abs = join(repoRoot, fd.path) + (fd.path.endsWith("/") ? "" : "");
+        return dirFilters.some((dir) => (abs + "/").startsWith(dir) || abs.startsWith(dir));
+      });
+    }
+
     if (fileDiffs.length === 0) {
       console.log("No changed files found.");
       process.exit(0);
@@ -117,7 +138,10 @@ program
     const requests: FileCheckRequest[] = [];
     for (const fd of fileDiffs) {
       if (fd.is_binary) continue;
-      const rules = resolveRules(fd.path, repoRoot);
+      const rules = resolveRules(fd.path, repoRoot, {
+        headRef: opts.head as string,
+        strictRules: Boolean(opts.strictRules),
+      });
       if (rules.length === 0) continue;
       requests.push({
         file_path: fd.path,
@@ -153,6 +177,8 @@ program
     const checkConfig: CheckConfig = {
       model: opts.model as string,
       maxConcurrent: parseInt(opts.maxConcurrent as string, 10),
+      maxAgenticConcurrent: parseInt(opts.agenticConcurrency as string, 10) || undefined,
+      timeoutMs: parseInt(opts.timeout as string, 10) || undefined,
       trace,
       agentic: agenticConfig,
     };
@@ -295,7 +321,7 @@ rulesCmd
     const repoRoot = getRepoRoot(opts.repo as string | undefined);
 
     try {
-      const applicable = resolveRules(opts.path as string, repoRoot);
+      const applicable = resolveRules(opts.path as string, repoRoot);  // rules list cmd: no ref grounding needed
 
       if (applicable.length === 0) {
         console.log(`No rules apply to '${opts.path}'.`);
