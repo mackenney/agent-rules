@@ -1,7 +1,7 @@
 # PROGRESS.md — Rust agent-rules CLI
 
 ## Status
-Not Started
+In Progress — Wave 0 complete; Wave 1 ready to dispatch
 
 ## Objective
 Rewrite the agent-rules CLI in idiomatic Rust. The tool checks PR diffs against LLM-powered rules defined in `.agent-rules.toml` files. Commands: `check`, `cache stats`, `cache clear`, `rules list`, `rules validate`.
@@ -46,14 +46,14 @@ Rewrite the agent-rules CLI in idiomatic Rust. The tool checks PR diffs against 
 
 ## Steps
 
-- [ ] [step-01-scaffold](./step-01-scaffold.md) — Create Cargo project, Cargo.toml, empty module files
-- [ ] [step-02-schema-types](./step-02-schema-types.md) — All serde types: Rule, Verdict, FileVerdict, PRReport, FileDiff
-- [ ] [step-03-git-parser](./step-03-git-parser.md) — Git shelling, changed files, TOML parser, diff annotation
-- [ ] [step-04-resolver-cache](./step-04-resolver-cache.md) — Rule resolver (walk+glob+merge), file cache, NullCache
-- [ ] [step-05-prompt-llm](./step-05-prompt-llm.md) — Prompt builder, Anthropic HTTP client, retry logic
-- [ ] [step-06-runner](./step-06-runner.md) — check_file, check_pr, semaphore concurrency
-- [ ] [step-07-reporter](./step-07-reporter.md) — Text (ruff-style), JSON, GitHub reporters; progress bar
-- [ ] [step-08-cli](./step-08-cli.md) — Clap CLI wiring: check, cache, rules subcommands; exit codes
+- [x] [step-01-scaffold](./step-01-scaffold.md) — Create Cargo project, Cargo.toml, empty module files ✅ reviewed (commit 6ddea40)
+- [x] [step-02-schema-types](./step-02-schema-types.md) — All serde types: Rule, Verdict, FileVerdict, PRReport, FileDiff
+- [x] [step-03-git-parser](./step-03-git-parser.md) — Git shelling, changed files, TOML parser, diff annotation
+- [x] [step-04-resolver-cache](./step-04-resolver-cache.md) — Rule resolver (walk+glob+merge), file cache, NullCache
+- [x] [step-05-prompt-llm](./step-05-prompt-llm.md) — Prompt builder, Anthropic HTTP client, retry logic
+- [x] [step-06-runner](./step-06-runner.md) — check_file, check_pr, semaphore concurrency
+- [x] [step-07-reporter](./step-07-reporter.md) — Text (ruff-style), JSON, GitHub reporters; progress bar
+- [x] [step-08-cli](./step-08-cli.md) — Clap CLI wiring: check, cache, rules subcommands; exit codes
 
 ## Architecture Notes
 
