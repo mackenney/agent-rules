@@ -370,7 +370,12 @@ fn run_rules(command: RulesCommands, colors: &Stylesheet) -> Result<i32> {
                 None => std::env::current_dir()?,
             };
 
-            let rules = resolve_rules_for_file(&path, &repo_root)?;
+            let abs_path = if path.is_absolute() {
+                path.clone()
+            } else {
+                repo_root.join(&path)
+            };
+            let rules = resolve_rules_for_file(&abs_path, &repo_root)?;
 
             if rules.is_empty() {
                 println!("No rules apply to {}", path.display());
@@ -515,6 +520,7 @@ fn run_rules(command: RulesCommands, colors: &Stylesheet) -> Result<i32> {
                 Ok(0)
             } else {
                 println!("{} Validation found errors", "✗".style(colors.error));
+                // Exit 1 for rule validation failures (not config errors — rules validate is a linting command)
                 Ok(1)
             }
         }

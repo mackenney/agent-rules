@@ -50,6 +50,11 @@ fn collect_rule_files(file_path: &Path, repo_root: &Path) -> Result<Vec<RuleFile
     };
     current = current.canonicalize().unwrap_or(current);
 
+    // Guard: if path is outside repo_root, start from repo_root instead
+    if !current.starts_with(&repo_root) {
+        current = repo_root.clone();
+    }
+
     // Walk up the directory tree
     loop {
         let rule_file_path = current.join(RULE_FILE_NAME);

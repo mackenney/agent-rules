@@ -11,7 +11,7 @@ use tokio::task::JoinSet;
 
 use crate::cache::{Cache, CacheManager, NullCache};
 use crate::config::CheckConfig;
-use crate::git::{get_changed_files, is_binary_extension};
+use crate::git::{get_changed_files, get_file_content, is_binary_extension};
 use crate::llm::AnthropicClient;
 use crate::parser::annotate_diff;
 use crate::progress::ProgressReporter;
@@ -51,16 +51,48 @@ impl CheckInfra {
 pub async fn check_pr(infra: &CheckInfra, config: &CheckConfig) -> Result<PRReport> {
     let start = std::time::Instant::now();
 
-    let file_diffs: Vec<FileDiff> = get_changed_files(
-        &config.base_ref,
-        &config.head_ref,
-        &config.repo_root,
-        config.max_file_bytes,
-    )
-    .context("failed to get changed files")?
-    .into_iter()
-    .filter(|f| !should_skip_file(&f.path, config))
-    .collect();
+    let raw_diffs: Vec<FileDiff> = if !config.files.is_empty() {
+        // --files mode: load specific files from disk (no git diff needed)
+        let mut diffs = Vec::new();
+        for fp in &config.files {
+            let abs_path = if fp.is_absolute() {
+                fp.clone()
+            } else {
+                config.repo_root.join(fp)
+            };
+            let content = get_file_content(&abs_path, config.max_file_bytes);
+            let is_oversized = content.is_none() && abs_path.exists();
+            let oversized_bytes = if is_oversized {
+                abs_path.metadata().ok().map(|m| m.len())
+            } else {
+                None
+            };
+            diffs.push(FileDiff {
+                path: fp.to_string_lossy().to_string(),
+                diff: String::new(),
+                content,
+                is_binary: false,
+                is_deleted: false,
+                is_new: false,
+                is_oversized,
+                oversized_bytes,
+            });
+        }
+        diffs
+    } else {
+        get_changed_files(
+            &config.base_ref,
+            &config.head_ref,
+            &config.repo_root,
+            config.max_file_bytes,
+        )
+        .context("failed to get changed files")?
+    };
+
+    let file_diffs: Vec<FileDiff> = raw_diffs
+        .into_iter()
+        .filter(|f| !should_skip_file(&f.path, config))
+        .collect();
 
     if let Some(progress) = &infra.progress {
         progress.set_total(file_diffs.len());
@@ -260,17 +292,17 @@ fn should_skip_file(path: &str, config: &CheckConfig) -> bool {
         return true;
     }
 
-    if !config.dir_filters.is_empty() {
-        let matches_filter = config
-            .dir_filters
-            .iter()
-            .any(|filter| path.starts_with(filter) || path.contains(&format!("/{filter}/")));
-        if !matches_filter {
-            return true;
-        }
+    if config.dir_filters.is_empty() {
+        return false;
     }
-
-    false
+    // Filter IN (only check files under these dirs)
+    // Use proper path prefix matching: "src" should match "src/foo.rs" but NOT "src-old/foo.rs"
+    let matches_filter = config.dir_filters.iter().any(|filter| {
+        path == filter
+            || path.starts_with(&format!("{filter}/"))
+            || path.contains(&format!("/{filter}/"))
+    });
+    !matches_filter
 }
 
 #[cfg(test)]
