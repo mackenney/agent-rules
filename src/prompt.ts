@@ -1,5 +1,4 @@
 import { FileCheckRequest, Rule, ContextHint } from "./schema.js";
-import { DEFAULTS } from "./config.js";
 
 export const STATELESS_SYSTEM_PROMPT = `\
 You are a code review agent. Your job is to evaluate a source file against a single rule
@@ -103,14 +102,14 @@ function buildFileBlock(request: FileCheckRequest): string {
   if (request.diff) {
     parts.push("\nCHANGED LINES (unified diff with absolute new-file line numbers):");
     parts.push("```diff");
-    parts.push(annotateDiff(request.diff.slice(0, DEFAULTS.maxDiffChars), totalLines));
+    parts.push(annotateDiff(request.diff, totalLines));
     parts.push("```");
   }
 
   if (content) {
     parts.push("\nFULL FILE CONTENT (each line prefixed \"N | \"; use N verbatim in line_refs):");
     parts.push("```");
-    parts.push(addLineNumbers(content.slice(0, DEFAULTS.maxContentChars)));
+    parts.push(addLineNumbers(content));
     parts.push("```");
   }
 

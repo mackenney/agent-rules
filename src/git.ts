@@ -14,7 +14,8 @@ const BINARY_EXTENSIONS = new Set([
 export function getChangedFiles(
   baseRef: string,
   headRef: string = "HEAD",
-  repoRoot: string = "."
+  repoRoot: string = ".",
+  maxFileBytes = DEFAULTS.maxFileBytes as number,
 ): FileDiff[] {
   const root = resolve(repoRoot);
 
@@ -46,6 +47,8 @@ export function getChangedFiles(
         is_binary: true,
         is_deleted: isDeleted,
         is_new: isNew,
+        is_oversized: false,
+        oversized_bytes: null,
       });
       continue;
     }
@@ -65,20 +68,37 @@ export function getChangedFiles(
         is_binary: true,
         is_deleted: isDeleted,
         is_new: isNew,
+        is_oversized: false,
+        oversized_bytes: null,
       });
       continue;
     }
 
     let content: string | null = null;
+    let is_oversized = false;
+    let oversized_bytes: number | null = null;
     if (!isDeleted) {
       try {
         content = runGit(["show", `${headRef}:${filePath}`], root);
-        if (Buffer.byteLength(content, "utf-8") > DEFAULTS.maxFileBytes) {
+        const byteLen = Buffer.byteLength(content, "utf-8");
+        if (byteLen > maxFileBytes) {
+          oversized_bytes = byteLen;
           content = null;
+          is_oversized = true;
         }
       } catch {
         const absPath = join(root, filePath);
-        content = getFileContent(absPath);
+        try {
+          const st = statSync(absPath);
+          if (st.size > maxFileBytes) {
+            is_oversized = true;
+            oversized_bytes = st.size;
+          } else {
+            content = readFileSync(absPath, { encoding: "utf-8" });
+          }
+        } catch {
+          // file not on disk — content stays null
+        }
       }
     }
 
@@ -89,6 +109,8 @@ export function getChangedFiles(
       is_binary: false,
       is_deleted: isDeleted,
       is_new: isNew,
+      is_oversized,
+      oversized_bytes,
     });
   }
 
@@ -100,10 +122,10 @@ function isBinary(filePath: string): boolean {
   return BINARY_EXTENSIONS.has(ext);
 }
 
-export function getFileContent(absPath: string): string | null {
+export function getFileContent(absPath: string, maxFileBytes = DEFAULTS.maxFileBytes as number): string | null {
   try {
     const stat = statSync(absPath);
-    if (stat.size > DEFAULTS.maxFileBytes) return null;
+    if (stat.size > maxFileBytes) return null;
     return readFileSync(absPath, { encoding: "utf-8" });
   } catch {
     return null;

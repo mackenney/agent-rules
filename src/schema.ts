@@ -93,6 +93,10 @@ export const FileDiffSchema = z.object({
   is_binary: z.boolean().default(false),
   is_deleted: z.boolean().default(false),
   is_new: z.boolean().default(false),
+  /** True when content is null because the file exceeded the byte-size limit. */
+  is_oversized: z.boolean().default(false),
+  /** UTF-8 byte size of the file when is_oversized is true; null otherwise. */
+  oversized_bytes: z.number().int().nullable().default(null),
 });
 export type FileDiff = z.infer<typeof FileDiffSchema>;
 

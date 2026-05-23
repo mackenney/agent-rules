@@ -74,25 +74,23 @@ describe("buildFileContext", () => {
     expect(out).not.toContain("FULL FILE CONTENT");
   });
 
-  it("truncates content exceeding maxContentChars", () => {
+  it("passes content through without truncation (callers skip oversized files)", () => {
     const hugeLine = "x".repeat(100);
     const content = Array.from({ length: 300 }, () => hugeLine).join("\n");
     expect(content.length).toBeGreaterThan(DEFAULTS.maxContentChars);
     const out = buildFileContext(makeRequest({ content }), makeRule());
-    // The output should be much smaller than the untruncated content
-    expect(out.length).toBeLessThan(content.length);
+    // All content is included — prompt.ts no longer truncates
+    expect(out).toContain(hugeLine);
+    expect(out.length).toBeGreaterThan(content.length); // line numbers add overhead
   });
 
-  it("truncates diff exceeding maxDiffChars", () => {
-    // Each "+line\n" is 6 chars; repeat 2000 = 12000 chars of +lines
+  it("passes diff through without truncation (callers skip oversized files)", () => {
     const hugeDiff = "@@ -1,1 +1,1 @@\n" + "+line\n".repeat(2000);
     expect(hugeDiff.length).toBeGreaterThan(DEFAULTS.maxDiffChars);
     const out = buildFileContext(makeRequest({ diff: hugeDiff }), makeRule());
-    // Count occurrences of "+line" in the output — if truncated, far fewer than 2000
+    // All 2000 +line occurrences are present — no truncation
     const matches = (out.match(/\+line/g) ?? []).length;
-    expect(matches).toBeLessThan(2000);
-    // The number of +line occurrences should be bounded by maxDiffChars / len("+line\n")
-    expect(matches).toBeLessThanOrEqual(Math.ceil(DEFAULTS.maxDiffChars / 6) + 1);
+    expect(matches).toBe(2000);
   });
 
   it("annotates diff lines with absolute line numbers", () => {

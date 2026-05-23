@@ -57,6 +57,9 @@ program
   .option("--no-cache", "Disable cache")
   .option("--model <name>", "Override LLM model", DEFAULTS.statelessModel)
   .option("--max-concurrent <n>", "Max parallel stateless LLM calls", String(DEFAULTS.maxConcurrent))
+  .option("--max-file-bytes <n>", "Skip files whose byte size exceeds this limit", String(DEFAULTS.maxFileBytes))
+  .option("--max-diff-chars <n>", "Skip files whose diff exceeds this character count", String(DEFAULTS.maxDiffChars))
+  .option("--max-content-chars <n>", "Skip files whose content exceeds this character count", String(DEFAULTS.maxContentChars))
   .option("--verbose", "Show full diagnostic output with source context", false)
   .option("--trace", "Also print raw prompts and LLM responses to stderr (implies --verbose)", false)
   .option("--post-comment", "Post results as a GitHub PR comment", false)
@@ -83,6 +86,22 @@ program
       process.exit(3);
     }
 
+    const maxFileBytes = parseInt(opts.maxFileBytes as string, 10);
+    if (!Number.isFinite(maxFileBytes) || maxFileBytes < 1) {
+      console.error("Error: --max-file-bytes must be a positive integer");
+      process.exit(3);
+    }
+    const maxDiffChars = parseInt(opts.maxDiffChars as string, 10);
+    if (!Number.isFinite(maxDiffChars) || maxDiffChars < 1) {
+      console.error("Error: --max-diff-chars must be a positive integer");
+      process.exit(3);
+    }
+    const maxContentChars = parseInt(opts.maxContentChars as string, 10);
+    if (!Number.isFinite(maxContentChars) || maxContentChars < 1) {
+      console.error("Error: --max-content-chars must be a positive integer");
+      process.exit(3);
+    }
+
     const outputOpt = opts.output as string | undefined;
     if (outputOpt !== undefined && !["text", "json", "github"].includes(outputOpt)) {
       console.error(`Error: --output must be 'text', 'json', or 'github', got '${outputOpt}'`);
@@ -94,7 +113,20 @@ program
     if (opts.files && (opts.files as string[]).length > 0) {
       for (const fp of opts.files as string[]) {
         const absPath = isAbsolute(fp) ? fp : join(repoRoot, fp);
-        const content = getFileContent(absPath);
+        let content: string | null = null;
+        let is_oversized = false;
+        let oversized_bytes: number | null = null;
+        try {
+          const st = statSync(absPath);
+          if (st.size > maxFileBytes) {
+            is_oversized = true;
+            oversized_bytes = st.size;
+          } else {
+            content = getFileContent(absPath, maxFileBytes);
+          }
+        } catch {
+          // file not on disk — content stays null
+        }
         fileDiffs.push({
           path: fp,
           diff: "",
@@ -102,11 +134,13 @@ program
           is_binary: false,
           is_deleted: false,
           is_new: false,
+          is_oversized,
+          oversized_bytes,
         });
       }
     } else {
       try {
-        fileDiffs = getChangedFiles(opts.base as string, opts.head as string, repoRoot);
+        fileDiffs = getChangedFiles(opts.base as string, opts.head as string, repoRoot, maxFileBytes);
       } catch (err) {
         console.error(`git error: ${(err as Error).message}`);
         process.exit(3);
@@ -143,6 +177,25 @@ program
         strictRules: Boolean(opts.strictRules),
       });
       if (rules.length === 0) continue;
+
+      const diffTooLong = fd.diff.length > maxDiffChars;
+      const contentTooLong = fd.content !== null && fd.content.length > maxContentChars;
+      if (fd.is_oversized || diffTooLong || contentTooLong) {
+        let reason: string;
+        if (fd.is_oversized) {
+          const actual = fd.oversized_bytes !== null ? ` (${fd.oversized_bytes} bytes)` : "";
+          reason = `byte size${actual} exceeds --max-file-bytes ${maxFileBytes}`;
+        } else if (diffTooLong) {
+          reason = `diff length ${fd.diff.length} chars exceeds --max-diff-chars ${maxDiffChars}`;
+        } else {
+          reason = `content length ${fd.content!.length} chars exceeds --max-content-chars ${maxContentChars}`;
+        }
+        for (const rule of rules) {
+          process.stderr.write(`warning: (${rule.id}, ${fd.path}) - file skipped: ${reason}\n`);
+        }
+        continue;
+      }
+
       requests.push({
         file_path: fd.path,
         diff: fd.diff,
