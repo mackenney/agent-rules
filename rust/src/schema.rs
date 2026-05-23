@@ -230,10 +230,14 @@ pub struct PRReport {
 }
 
 /// File diff data for passing to LLM
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileDiff {
     pub path: String,
     pub diff: String,
     pub content: Option<String>,
-    pub line_count: usize,
+    pub is_binary: bool,
+    pub is_deleted: bool,
+    pub is_new: bool,
+    pub is_oversized: bool,
+    pub oversized_bytes: Option<u64>,
 }

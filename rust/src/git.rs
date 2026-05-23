@@ -5,6 +5,8 @@
 use anyhow::{Context, Result, bail};
 use std::path::Path;
 
+use crate::schema::FileDiff;
+
 /// List of binary file extensions to skip
 const BINARY_EXTENSIONS: &[&str] = &[
     "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "svg", "pdf", "doc", "docx", "xls", "xlsx",
@@ -48,25 +50,14 @@ pub fn is_binary_extension(path: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// A changed file from git diff
-#[derive(Debug, Clone)]
-pub struct ChangedFile {
-    pub path: String,
-    pub status: FileStatus,
-}
-
-/// Git file status
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileStatus {
-    Added,
-    Modified,
-    Deleted,
-    Renamed,
-}
-
-/// Get list of changed files between two refs
-pub fn get_changed_files(base_ref: &str, head_ref: &str, cwd: &Path) -> Result<Vec<ChangedFile>> {
-    let output = run_git(&["diff", "--name-status", base_ref, head_ref], cwd)?;
+/// Get list of changed files between two refs, enriched with diff and content
+pub fn get_changed_files(
+    base_ref: &str,
+    head_ref: &str,
+    repo_root: &Path,
+    max_file_bytes: u64,
+) -> Result<Vec<FileDiff>> {
+    let output = run_git(&["diff", "--name-status", base_ref, head_ref], repo_root)?;
 
     let mut files = Vec::new();
     for line in output.lines() {
@@ -80,15 +71,12 @@ pub fn get_changed_files(base_ref: &str, head_ref: &str, cwd: &Path) -> Result<V
         }
 
         let status_char = parts[0].chars().next().unwrap_or('M');
-        let status = match status_char {
-            'A' => FileStatus::Added,
-            'D' => FileStatus::Deleted,
-            'R' => FileStatus::Renamed,
-            _ => FileStatus::Modified,
-        };
+        let is_deleted = status_char == 'D';
+        let is_new = status_char == 'A';
+        let is_renamed = status_char == 'R';
 
         // For renamed files, use the new name (second path)
-        let path = if status == FileStatus::Renamed && parts.len() >= 3 {
+        let path = if is_renamed && parts.len() >= 3 {
             parts[2].to_string()
         } else if parts.len() >= 2 {
             parts[1].to_string()
@@ -96,7 +84,38 @@ pub fn get_changed_files(base_ref: &str, head_ref: &str, cwd: &Path) -> Result<V
             continue;
         };
 
-        files.push(ChangedFile { path, status });
+        let diff =
+            run_git(&["diff", base_ref, head_ref, "--", &path], repo_root).unwrap_or_default();
+
+        let is_binary = is_binary_extension(&path) || diff.contains("Binary files");
+
+        let (content, is_oversized, oversized_bytes) = if !is_deleted && !is_binary {
+            let spec = format!("{}:{}", head_ref, path);
+            match run_git_optional(&["show", &spec], repo_root) {
+                Some(c) => {
+                    let byte_len = c.len() as u64;
+                    if byte_len > max_file_bytes {
+                        (None, true, Some(byte_len))
+                    } else {
+                        (Some(c), false, None)
+                    }
+                }
+                None => (None, false, None),
+            }
+        } else {
+            (None, false, None)
+        };
+
+        files.push(FileDiff {
+            path,
+            diff,
+            content,
+            is_binary,
+            is_deleted,
+            is_new,
+            is_oversized,
+            oversized_bytes,
+        });
     }
 
     Ok(files)
@@ -125,6 +144,15 @@ pub fn count_file_lines(content: &str) -> usize {
     } else {
         content.lines().count()
     }
+}
+
+/// Read a local file, returning None if it exceeds max_bytes or is not valid UTF-8
+pub fn get_file_content(path: &Path, max_bytes: u64) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.len() as u64 > max_bytes {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
 }
 
 #[cfg(test)]
