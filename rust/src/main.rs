@@ -484,16 +484,41 @@ fn run_rules(command: RulesCommands, colors: &Stylesheet) -> Result<i32> {
                 }
             }
 
+            // Only report conflicts for files that are NOT in ancestor-descendant relationship.
+            // Parent-child overrides (same ID in parent dir and child dir) are valid cascade.
             let conflicts: Vec<_> = all_rule_ids
                 .iter()
-                .filter(|(_, files)| files.len() > 1)
+                .filter(|(_, files)| {
+                    if files.len() < 2 {
+                        return false;
+                    }
+                    // Check if any pair of files is unrelated (not ancestor-descendant)
+                    let dirs: Vec<std::path::PathBuf> = files
+                        .iter()
+                        .map(|f| {
+                            std::path::Path::new(f)
+                                .parent()
+                                .map(|p| p.to_path_buf())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    for i in 0..dirs.len() {
+                        for j in (i + 1)..dirs.len() {
+                            if !dirs[i].starts_with(&dirs[j]) && !dirs[j].starts_with(&dirs[i]) {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                })
                 .collect();
 
             if !conflicts.is_empty() {
+                all_valid = false;
                 println!();
                 println!(
-                    "{} Rule ID conflicts detected:",
-                    "Warning:".style(colors.warning)
+                    "{} Cross-file rule ID conflicts detected:",
+                    "Error:".style(colors.error)
                 );
                 for (id, files) in &conflicts {
                     println!("  {} defined in:", id.style(colors.note));
