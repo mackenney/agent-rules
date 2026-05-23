@@ -156,10 +156,8 @@ pub struct RuleVerdict {
     pub reasoning: String,
     #[serde(default)]
     pub severity: Severity,
-    /// Line number in the file (1-indexed, if applicable)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
-    /// Was this result from cache?
     #[serde(default)]
     pub cached: bool,
 }
@@ -169,23 +167,18 @@ pub struct RuleVerdict {
 pub struct FileVerdict {
     pub file_path: String,
     pub verdicts: Vec<RuleVerdict>,
-    /// True if all rules passed
     pub passed: bool,
-    /// Highest severity among failures (None if passed)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_severity: Option<Severity>,
-    /// Was this file skipped? (binary, oversized, etc.)
     #[serde(default)]
     pub skipped: bool,
     #[serde(default)]
     pub skip_reason: Option<String>,
-    /// From cache?
     #[serde(default)]
     pub cached: bool,
 }
 
 impl FileVerdict {
-    /// Create a new FileVerdict with computed fields
     pub fn new(file_path: String, verdicts: Vec<RuleVerdict>) -> Self {
         let passed = verdicts
             .iter()
@@ -211,260 +204,36 @@ impl FileVerdict {
         }
     }
 
-    /// Create a skipped file verdict
-    pub fn skipped(file_path: String, reason: &str) -> Self {
+    pub fn skipped(file_path: String, reason: String) -> Self {
         Self {
             file_path,
             verdicts: vec![],
             passed: true,
             max_severity: None,
             skipped: true,
-            skip_reason: Some(reason.to_string()),
+            skip_reason: Some(reason),
             cached: false,
         }
     }
 }
 
-/// Overall verdict for a PR
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum OverallVerdict {
-    Pass,
-    Warn,
-    Fail,
-}
-
-impl std::fmt::Display for OverallVerdict {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OverallVerdict::Pass => write!(f, "pass"),
-            OverallVerdict::Warn => write!(f, "warn"),
-            OverallVerdict::Fail => write!(f, "fail"),
-        }
-    }
-}
-
-/// Complete PR check report
+/// Full PR report
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PRReport {
     pub base_ref: String,
     pub head_ref: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pr_url: Option<String>,
     pub files: Vec<FileVerdict>,
-    pub overall_verdict: OverallVerdict,
-    /// Total files checked (excluding skipped)
-    pub files_checked: usize,
-    /// Files that passed all rules
-    pub files_passed: usize,
-    /// Files with at least one failure
-    pub files_failed: usize,
-    /// Files skipped (binary, oversized, etc.)
-    pub files_skipped: usize,
-    /// Total rules evaluated
-    pub rules_evaluated: usize,
-    /// Rules that passed
-    pub rules_passed: usize,
-    /// Rules that failed
-    pub rules_failed: usize,
-    /// Cache hit count
-    pub cache_hits: usize,
+    pub passed: bool,
+    pub total_rules_run: usize,
+    pub total_failures: usize,
+    pub cached_count: usize,
 }
 
-impl PRReport {
-    /// Create a report from file verdicts
-    pub fn new(
-        base_ref: String,
-        head_ref: String,
-        pr_url: Option<String>,
-        files: Vec<FileVerdict>,
-    ) -> Self {
-        let files_skipped = files.iter().filter(|f| f.skipped).count();
-        let files_checked = files.len() - files_skipped;
-        let files_passed = files.iter().filter(|f| !f.skipped && f.passed).count();
-        let files_failed = files.iter().filter(|f| !f.skipped && !f.passed).count();
-
-        let rules_evaluated: usize = files.iter().map(|f| f.verdicts.len()).sum();
-        let rules_passed: usize = files
-            .iter()
-            .flat_map(|f| &f.verdicts)
-            .filter(|v| v.verdict.resolve() == ResolvedVerdict::Pass)
-            .count();
-        let rules_failed = rules_evaluated - rules_passed;
-
-        let cache_hits: usize = files
-            .iter()
-            .flat_map(|f| &f.verdicts)
-            .filter(|v| v.cached)
-            .count();
-
-        let has_error = files
-            .iter()
-            .any(|f| f.max_severity == Some(Severity::Error));
-        let has_warn = files.iter().any(|f| f.max_severity == Some(Severity::Warn));
-        let overall_verdict = if has_error {
-            OverallVerdict::Fail
-        } else if has_warn {
-            OverallVerdict::Warn
-        } else {
-            OverallVerdict::Pass
-        };
-
-        Self {
-            base_ref,
-            head_ref,
-            pr_url,
-            files,
-            overall_verdict,
-            files_checked,
-            files_passed,
-            files_failed,
-            files_skipped,
-            rules_evaluated,
-            rules_passed,
-            rules_failed,
-            cache_hits,
-        }
-    }
-}
-
-/// A file changed in the PR
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// File diff data for passing to LLM
+#[derive(Debug, Clone)]
 pub struct FileDiff {
     pub path: String,
     pub diff: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
-    #[serde(default)]
-    pub is_binary: bool,
-    #[serde(default)]
-    pub is_deleted: bool,
-    #[serde(default)]
-    pub is_new: bool,
-    #[serde(default)]
-    pub is_oversized: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub oversized_bytes: Option<u64>,
-}
-
-/// Request to check a single file
-#[derive(Debug, Clone)]
-pub struct FileCheckRequest {
-    pub file_path: String,
-    pub diff: String,
-    pub content: Option<String>,
-    pub rules: Vec<Rule>,
-    pub is_new: bool,
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_severity_default() {
-        let s: Severity = Default::default();
-        assert_eq!(s, Severity::Warn);
-    }
-
-    #[test]
-    fn test_verdict_resolve() {
-        assert_eq!(Verdict::Pass.resolve(), ResolvedVerdict::Pass);
-        assert_eq!(Verdict::Fail.resolve(), ResolvedVerdict::Fail);
-        assert_eq!(Verdict::NeedsMoreContext.resolve(), ResolvedVerdict::Fail);
-    }
-
-    #[test]
-    fn test_rule_deserialize() {
-        let toml = r#"
-            id = "test-rule"
-            name = "Test Rule"
-            prompt = "Check something"
-        "#;
-        let rule: Rule = toml::from_str(toml).unwrap();
-        assert_eq!(rule.id, "test-rule");
-        assert_eq!(rule.severity, Severity::Warn);
-        assert!(rule.enabled);
-        assert_eq!(rule.glob_include, vec!["**/*"]);
-    }
-
-    #[test]
-    fn test_rule_file_deserialize() {
-        let toml = r#"
-            inherit-mode = "replace"
-            disable-rules = ["old-rule"]
-
-            [[rules]]
-            id = "new-rule"
-            name = "New Rule"
-            prompt = "Check"
-        "#;
-        let rf: RuleFile = toml::from_str(toml).unwrap();
-        assert_eq!(rf.inherit_mode, InheritMode::Replace);
-        assert_eq!(rf.disable_rules, vec!["old-rule"]);
-        assert_eq!(rf.rules.len(), 1);
-    }
-
-    #[test]
-    fn test_file_verdict_new() {
-        let verdicts = vec![
-            RuleVerdict {
-                rule_id: "r1".into(),
-                rule_name: "Rule 1".into(),
-                verdict: Verdict::Pass,
-                confidence: 0.95,
-                reasoning: String::new(),
-                severity: Severity::Warn,
-                line: None,
-                cached: false,
-            },
-            RuleVerdict {
-                rule_id: "r2".into(),
-                rule_name: "Rule 2".into(),
-                verdict: Verdict::Fail,
-                confidence: 0.90,
-                reasoning: "Problem found".into(),
-                severity: Severity::Error,
-                line: Some(42),
-                cached: false,
-            },
-        ];
-        let fv = FileVerdict::new("test.rs".into(), verdicts);
-        assert!(!fv.passed);
-        assert_eq!(fv.max_severity, Some(Severity::Error));
-    }
-
-    #[test]
-    fn test_pr_report_stats() {
-        let files = vec![
-            FileVerdict::new(
-                "a.rs".into(),
-                vec![RuleVerdict {
-                    rule_id: "r1".into(),
-                    rule_name: "R1".into(),
-                    verdict: Verdict::Pass,
-                    confidence: 0.9,
-                    reasoning: String::new(),
-                    severity: Severity::Warn,
-                    line: None,
-                    cached: false,
-                }],
-            ),
-            FileVerdict::skipped("b.bin".into(), "binary file"),
-        ];
-        let report = PRReport::new("main".into(), "HEAD".into(), None, files);
-        assert_eq!(report.files_checked, 1);
-        assert_eq!(report.files_skipped, 1);
-        assert_eq!(report.overall_verdict, OverallVerdict::Pass);
-    }
-
-    #[test]
-    fn test_verdict_json_serialization() {
-        let v = Verdict::NeedsMoreContext;
-        let json = serde_json::to_string(&v).unwrap();
-        assert_eq!(json, "\"needs-more-context\"");
-
-        let parsed: Verdict = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed, v);
-    }
+    pub line_count: usize,
 }
