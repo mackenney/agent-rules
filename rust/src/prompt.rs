@@ -7,7 +7,7 @@ use crate::parser::add_line_numbers;
 use crate::schema::Rule;
 
 /// System prompt (exact TypeScript implementation text)
-pub const SYSTEM_PROMPT: &str = "You are a code review agent. Your job is to evaluate a source file against a single rule\nand call submit_verdict with your evaluation.\n\nVerdict meanings:\n- \"pass\": the code satisfies this rule. No violation found.\n- \"fail\": the code violates this rule.\n- \"needs-more-context\": you cannot determine compliance without reading other files\n  that are not in the diff. Use sparingly \u{2014} only when the answer genuinely depends\n  on external state. Do not use to express uncertainty about borderline cases; use\n  \"fail\" when in doubt.\n  When emitting needs-more-context you MUST populate context_hint.\n\nField guidance:\n- \"confidence\": certainty 0.0\u{2013}1.0. Use < 0.7 when genuinely ambiguous.\n- \"line_refs\": absolute line numbers in the final file (from the numbered FULL FILE\n  CONTENT block). These must match the \" N | \" prefix shown on each line. Empty for pass.\n- \"context_hint\": required only for needs-more-context.\n- If the rule doesn't apply to this file type, return \"pass\" with confidence 1.0.\n- Prefer concrete verdicts over needs-more-context when you have reasonable evidence.";
+pub const SYSTEM_PROMPT: &str = "You are a code review agent. Your job is to evaluate a source file against one or more rules\nand call submit_verdict with your evaluation for EACH rule.\n\nVerdict meanings:\n- \"pass\": the code satisfies this rule. No violation found.\n- \"fail\": the code violates this rule.\n- \"needs-more-context\": you cannot determine compliance without reading other files\n  that are not in the diff. Use sparingly \u{2014} only when the answer genuinely depends\n  on external state. Do not use to express uncertainty about borderline cases; use\n  \"fail\" when in doubt.\n  When emitting needs-more-context you MUST populate context_hint.\n\nField guidance:\n- \"confidence\": certainty 0.0\u{2013}1.0. Use < 0.7 when genuinely ambiguous.\n- \"line_refs\": absolute line numbers in the final file (from the numbered FULL FILE\n  CONTENT block). These must match the \" N | \" prefix shown on each line. Empty for pass.\n- \"context_hint\": required only for needs-more-context.\n- If the rule doesn't apply to this file type, return \"pass\" with confidence 1.0.\n- Prefer concrete verdicts over needs-more-context when you have reasonable evidence.\n- Call submit_verdict once for EACH rule listed in the prompt.";
 
 /// Returns the system prompt string
 pub fn build_system_prompt() -> &'static str {
@@ -15,31 +15,29 @@ pub fn build_system_prompt() -> &'static str {
 }
 
 /// Build the formatted section for a single rule
-pub fn build_rule_section(rule: &Rule) -> String {
-    let mut s = format!("**{}** (`{}`)\n", rule.name, rule.id);
-    s.push_str(&format!("Severity: {}\n", rule.severity));
-    s.push_str(&format!("{}\n", rule.prompt));
+pub fn build_rule_section(n: usize, rule: &Rule) -> String {
+    let mut s = format!("Rule {}: {}\n", n, rule.id);
+    s.push_str(&format!("  name: {}\n", rule.name));
+    s.push_str(&format!("  severity: {}\n", rule.severity));
+    s.push_str(&format!("  instruction: {}\n", rule.prompt.trim()));
 
     if !rule.needs_more_context_when.is_empty() {
         s.push_str(&format!(
-            "Use needs-more-context when: {}\n",
-            rule.needs_more_context_when
+            "  escalation guidance: {}\n",
+            rule.needs_more_context_when.trim()
         ));
     }
 
     if !rule.examples.is_empty() {
-        s.push_str("Examples:\n");
+        s.push_str("  examples:\n");
         for example in &rule.examples {
-            let pass_fail = if example.should_pass {
-                "✓ pass"
+            let tag = if example.should_pass {
+                "[PASS]"
             } else {
-                "✗ fail"
+                "[FAIL]"
             };
-            s.push_str(&format!("- {} `{}`", pass_fail, example.code));
-            if !example.explanation.is_empty() {
-                s.push_str(&format!(" — {}", example.explanation));
-            }
-            s.push('\n');
+            s.push_str(&format!("    {} {}\n", tag, example.explanation));
+            s.push_str(&format!("      {}\n", example.code));
         }
     }
 
@@ -56,13 +54,13 @@ pub fn build_user_prompt(
 ) -> String {
     let mut prompt = String::new();
 
-    prompt.push_str(&format!("## File: {}\n\n", file_path));
+    prompt.push_str(&format!("FILE: {}\n\n", file_path));
 
     if is_new_file {
         prompt.push_str("This is a newly added file.\n\n");
     }
 
-    prompt.push_str("### Changes (diff)\n\n");
+    prompt.push_str("CHANGED LINES (unified diff with absolute new-file line numbers):\n\n");
     prompt.push_str("```diff\n");
     prompt.push_str(diff);
     if !diff.ends_with('\n') {
@@ -71,21 +69,25 @@ pub fn build_user_prompt(
     prompt.push_str("```\n\n");
 
     if let Some(content) = content {
-        prompt.push_str("### Full file content (with line numbers)\n\n");
+        prompt.push_str(
+            "FULL FILE CONTENT (each line prefixed \"N | \"; use N verbatim in line_refs):\n\n",
+        );
         prompt.push_str("```\n");
         prompt.push_str(&add_line_numbers(content));
         prompt.push_str("\n```\n\n");
     }
 
-    prompt.push_str("### Rules to evaluate\n\n");
+    prompt.push_str("RULES TO EVALUATE:\n\n");
     for (i, rule) in rules.iter().enumerate() {
-        prompt.push_str(&format!("{}. ", i + 1));
-        prompt.push_str(&build_rule_section(rule));
+        prompt.push_str(&build_rule_section(i + 1, rule));
         prompt.push('\n');
     }
 
-    prompt
-        .push_str("\nEvaluate each rule and submit your verdict using the submit_verdict tool.\n");
+    let n = rules.len();
+    prompt.push_str(&format!(
+        "\nCall submit_verdict once for EACH rule above. You MUST submit verdicts for all {} rules.",
+        n
+    ));
 
     prompt
 }
@@ -123,8 +125,13 @@ pub fn build_tool_schema() -> serde_json::Value {
                     "description": "Absolute line numbers in the final file where the violation occurs (empty for pass)"
                 },
                 "context_hint": {
-                    "type": "string",
-                    "description": "Required when verdict is needs-more-context"
+                    "type": "object",
+                    "description": "Required when verdict is needs-more-context.",
+                    "properties": {
+                        "read_files": { "type": "array", "items": { "type": "string" } },
+                        "question": { "type": "string" }
+                    },
+                    "required": ["read_files", "question"]
                 }
             },
             "required": ["rule_id", "verdict", "confidence", "reasoning", "line_refs"]
@@ -177,11 +184,11 @@ mod tests {
             false,
         );
 
-        assert!(prompt.contains("## File: src/main.rs"));
-        assert!(prompt.contains("### Changes (diff)"));
+        assert!(prompt.contains("FILE: src/main.rs"));
+        assert!(prompt.contains("CHANGED LINES"));
         assert!(prompt.contains("+new line"));
-        assert!(prompt.contains("### Full file content"));
-        assert!(prompt.contains("### Rules to evaluate"));
+        assert!(prompt.contains("FULL FILE CONTENT"));
+        assert!(prompt.contains("RULES TO EVALUATE"));
         assert!(prompt.contains("test-rule"));
     }
 
@@ -223,7 +230,7 @@ mod tests {
     #[test]
     fn test_build_rule_section() {
         let rule = make_test_rule();
-        let section = build_rule_section(&rule);
+        let section = build_rule_section(1, &rule);
         assert!(section.contains("test-rule"));
         assert!(section.contains("Test Rule"));
     }

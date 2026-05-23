@@ -95,8 +95,8 @@ pub fn annotate_diff(diff: &str, total_lines: usize) -> String {
                 new_line += 1;
             }
             Some('-') => {
-                // Removed lines don't exist in new file, show placeholder
-                output.push(format!("{:>width$} | {}", "", raw, width = width));
+                // Show current newLine position; don't increment (line is removed from new file)
+                output.push(format!("{:>width$} | {}", new_line, raw, width = width));
             }
             Some(' ') => {
                 // Context line
@@ -159,8 +159,8 @@ index abc..def 100644
 
         let annotated = annotate_diff(diff, 2);
 
-        // Removed line has no line number
-        assert!(annotated.contains("  | -removed"));
+        // Removed line shows current new_line counter (not incremented)
+        assert!(annotated.contains("2 | -removed"));
         assert!(annotated.contains("1 |  line one"));
         assert!(annotated.contains("2 |  line two"));
     }
