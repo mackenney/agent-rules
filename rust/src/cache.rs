@@ -45,8 +45,49 @@ pub trait Cache: Send + Sync {
         file_path: &str,
         rule_ids: &[String],
     );
+    fn key_for(
+        &self,
+        file_path: &str,
+        content: Option<&str>,
+        diff: &str,
+        rules: &[Rule],
+        model: &str,
+    ) -> String;
     fn stats(&self) -> Result<CacheStats>;
     fn clear(&self) -> Result<usize>;
+}
+
+/// Compute cache key deterministically (shared by all Cache implementations).
+///
+/// Key derivation MUST match TypeScript exactly for cross-implementation cache hits.
+fn compute_cache_key(
+    file_path: &str,
+    content: Option<&str>,
+    diff: &str,
+    rules: &[Rule],
+    model: &str,
+) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("version:{}\n", CACHE_VERSION));
+    hasher.update(format!("model:{}\n", model));
+
+    let mut sorted_rules: Vec<&Rule> = rules.iter().collect();
+    sorted_rules.sort_by(|a, b| a.id.cmp(&b.id));
+
+    for rule in sorted_rules {
+        hasher.update(format!(
+            "rule:{}:{}:{}\n",
+            rule.id,
+            rule.severity,
+            rule.prompt.trim()
+        ));
+    }
+
+    hasher.update(format!("path:{}\n", file_path));
+    hasher.update(format!("content:{}\n", content.unwrap_or("")));
+    hasher.update(format!("diff:{}", diff));
+
+    hex::encode(hasher.finalize())
 }
 
 /// File-based cache manager
@@ -66,15 +107,7 @@ impl CacheManager {
         Ok(Self { cache_dir })
     }
 
-    /// Generate a cache key for a file check request
-    ///
-    /// Key derivation MUST match TypeScript exactly for cache compatibility:
-    /// - version:N
-    /// - model:NAME
-    /// - rule:ID:SEVERITY:PROMPT (sorted by ID)
-    /// - path:FILEPATH
-    /// - content:CONTENT (or empty)
-    /// - diff:DIFF
+    /// Generate a cache key for a file check request (delegates to module-level function).
     pub fn key_for(
         &self,
         file_path: &str,
@@ -83,30 +116,7 @@ impl CacheManager {
         rules: &[Rule],
         model: &str,
     ) -> String {
-        let mut hasher = Sha256::new();
-
-        // Order must match TypeScript exactly
-        hasher.update(format!("version:{}\n", CACHE_VERSION));
-        hasher.update(format!("model:{}\n", model));
-
-        // Sort rules by ID for deterministic key
-        let mut sorted_rules: Vec<&Rule> = rules.iter().collect();
-        sorted_rules.sort_by(|a, b| a.id.cmp(&b.id));
-
-        for rule in sorted_rules {
-            hasher.update(format!(
-                "rule:{}:{}:{}\n",
-                rule.id,
-                rule.severity,
-                rule.prompt.trim()
-            ));
-        }
-
-        hasher.update(format!("path:{}\n", file_path));
-        hasher.update(format!("content:{}\n", content.unwrap_or("")));
-        hasher.update(format!("diff:{}", diff));
-
-        hex::encode(hasher.finalize())
+        compute_cache_key(file_path, content, diff, rules, model)
     }
 
     fn entry_path(&self, key: &str) -> PathBuf {
@@ -228,6 +238,17 @@ impl Cache for CacheManager {
 
         Ok(count)
     }
+
+    fn key_for(
+        &self,
+        file_path: &str,
+        content: Option<&str>,
+        diff: &str,
+        rules: &[Rule],
+        model: &str,
+    ) -> String {
+        compute_cache_key(file_path, content, diff, rules, model)
+    }
 }
 
 impl Default for CacheManager {
@@ -261,6 +282,17 @@ impl Cache for NullCache {
 
     fn clear(&self) -> Result<usize> {
         Ok(0)
+    }
+
+    fn key_for(
+        &self,
+        file_path: &str,
+        content: Option<&str>,
+        diff: &str,
+        rules: &[Rule],
+        model: &str,
+    ) -> String {
+        compute_cache_key(file_path, content, diff, rules, model)
     }
 }
 
