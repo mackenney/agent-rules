@@ -113,6 +113,18 @@ struct CheckArgs {
     #[arg(long, default_value = "10")]
     max_concurrent: usize,
 
+    /// Max concurrent agentic escalations (independent of stateless slots)
+    #[arg(long, default_value = "2")]
+    agentic_concurrency: usize,
+
+    /// Model for agentic escalation
+    #[arg(long, default_value = config::DEFAULT_AGENTIC_MODEL)]
+    agentic_model: String,
+
+    /// Timeout for agentic sessions (ms)
+    #[arg(long, default_value = "180000")]
+    agentic_timeout: u64,
+
     /// Max file size in bytes
     #[arg(long, default_value = "100000")]
     max_file_bytes: u64,
@@ -251,6 +263,9 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         no_cache: args.no_cache,
         model: args.model,
         max_concurrent: args.max_concurrent,
+        max_agentic_concurrent: args.agentic_concurrency,
+        agentic_model: args.agentic_model,
+        agentic_timeout_ms: args.agentic_timeout,
         max_file_bytes: args.max_file_bytes,
         max_diff_chars: args.max_diff_chars,
         max_content_chars: args.max_content_chars,
@@ -290,6 +305,7 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         &report,
         config.output_format,
         config.verbose,
+        Some(&config.repo_root),
         &mut stdout,
         colors,
     )?;

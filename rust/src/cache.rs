@@ -321,6 +321,7 @@ mod tests {
                 confidence: 0.95,
                 reasoning: String::new(),
                 severity: Severity::Warn,
+                line_refs: vec![],
                 line: None,
                 cached: false,
             }],

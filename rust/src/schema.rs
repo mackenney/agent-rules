@@ -189,6 +189,10 @@ pub struct RuleVerdict {
     pub reasoning: String,
     #[serde(default)]
     pub severity: Severity,
+    /// All line numbers cited by the LLM (for verbose source context)
+    #[serde(default)]
+    pub line_refs: Vec<u32>,
+    /// First line ref — kept for backward compat with cache/JSON
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
     #[serde(default)]

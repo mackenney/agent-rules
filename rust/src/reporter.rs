@@ -69,16 +69,18 @@ impl Default for Stylesheet {
     }
 }
 
-/// Print a report in the specified format
+/// Print a report in the specified format.
+/// `repo_root` is used in verbose mode to load source context.
 pub fn print_report<W: Write>(
     report: &PRReport,
     format: OutputFormat,
     verbose: bool,
+    repo_root: Option<&std::path::Path>,
     writer: &mut W,
     colors: &Stylesheet,
 ) -> std::io::Result<()> {
     match format {
-        OutputFormat::Text => print_text_report(report, verbose, writer, colors),
+        OutputFormat::Text => print_text_report(report, verbose, repo_root, writer, colors),
         OutputFormat::Json => {
             let json = format_json(report);
             writeln!(writer, "{}", json)
@@ -105,6 +107,7 @@ pub fn format_github_comment(report: &PRReport) -> String {
 fn print_text_report<W: Write>(
     report: &PRReport,
     verbose: bool,
+    repo_root: Option<&std::path::Path>,
     writer: &mut W,
     colors: &Stylesheet,
 ) -> std::io::Result<()> {
@@ -123,7 +126,7 @@ fn print_text_report<W: Write>(
 
     for (file, verdict) in &violations {
         if verbose {
-            print_verbose_violation(file, verdict, writer, colors)?;
+            print_verbose_violation(file, verdict, repo_root, writer, colors)?;
         } else {
             print_concise_violation(file, verdict, writer, colors)?;
         }
@@ -170,6 +173,7 @@ fn print_concise_violation<W: Write>(
 fn print_verbose_violation<W: Write>(
     file: &FileVerdict,
     verdict: &RuleVerdict,
+    repo_root: Option<&std::path::Path>,
     writer: &mut W,
     colors: &Stylesheet,
 ) -> std::io::Result<()> {
@@ -178,37 +182,100 @@ fn print_verbose_violation<W: Write>(
         Severity::Warn => "warning".style(colors.warning),
     };
 
+    // Header: severity[rule-id]: reasoning
     writeln!(
         writer,
         "{}[{}]: {}",
         severity_str,
         verdict.rule_id.style(colors.note),
-        verdict.rule_name,
+        verdict.reasoning,
     )?;
 
-    let line_part = verdict.line.map(|l| format!(":{}", l)).unwrap_or_default();
-
+    // Location: --> file:first_line
+    let first_line = verdict.line_refs.first().copied().or(verdict.line);
+    let line_part = first_line.map(|l| format!(":{l}")).unwrap_or_default();
     writeln!(
         writer,
         "  {} {}{}",
         "-->".style(colors.gutter),
         file.file_path.style(colors.file_path),
-        line_part.style(colors.line_number),
+        line_part,
     )?;
 
-    writeln!(writer, "   {}", "│".style(colors.vertical_bar))?;
+    // Load source lines from disk (fall back silently)
+    let source_lines: Option<Vec<String>> = repo_root.and_then(|root| {
+        let abs = root.join(&file.file_path);
+        std::fs::read_to_string(&abs)
+            .ok()
+            .map(|s| s.lines().map(|l| l.to_string()).collect())
+    });
+
+    if let (Some(src), Some(first)) = (&source_lines, first_line) {
+        let highlight_set: std::collections::HashSet<u32> =
+            verdict.line_refs.iter().copied().collect();
+        let last = verdict.line_refs.last().copied().unwrap_or(first);
+        // Show 2 lines before first ref through 2 lines after last ref
+        let ctx_start = first.saturating_sub(2).max(1) as usize;
+        let ctx_end = ((last + 2) as usize).min(src.len());
+        let gutter_w = ctx_end.to_string().len();
+
+        let gutter_line = format!(
+            " {:>w$} {}",
+            "",
+            "│".style(colors.vertical_bar),
+            w = gutter_w
+        );
+        writeln!(writer, "{}", gutter_line)?;
+
+        for n in ctx_start..=ctx_end {
+            let src_line = src.get(n - 1).map(|s| s.as_str()).unwrap_or("");
+            let line_no = format!(" {:>w$} ", n, w = gutter_w);
+            writeln!(
+                writer,
+                "{}{}  {}",
+                line_no.style(colors.line_number),
+                "│".style(colors.vertical_bar),
+                src_line,
+            )?;
+
+            if highlight_set.contains(&(n as u32)) {
+                // Underline the non-whitespace content with carets
+                let indent = src_line.len() - src_line.trim_start().len();
+                let content_len = src_line.trim_end().len().saturating_sub(indent).max(1);
+                let carets = "^".repeat(content_len);
+                let caret_str = match verdict.severity {
+                    Severity::Error => carets.style(colors.error).to_string(),
+                    Severity::Warn => carets.style(colors.warning).to_string(),
+                };
+                // Gutter + spaces matching indent + carets
+                let pad = " ".repeat(gutter_w + 3 + indent); // line_no width + " │  " + indent
+                writeln!(
+                    writer,
+                    "{}{}  {}{}",
+                    " ".repeat(gutter_w + 1).style(colors.line_number),
+                    "│".style(colors.vertical_bar),
+                    " ".repeat(indent),
+                    caret_str,
+                )?;
+                let _ = pad; // suppress unused warning
+            }
+        }
+
+        writeln!(writer, "{}", gutter_line)?;
+    } else {
+        // No source: just show a thin divider
+        let gutter = format!(" {:>3} {}", "", "│".style(colors.vertical_bar));
+        writeln!(writer, "{}", gutter)?;
+    }
+
+    // Confidence note
+    let cached_note = if verdict.cached { " (cached)" } else { "" };
     writeln!(
         writer,
-        "   {} {}",
-        "=".style(colors.gutter),
-        verdict.reasoning,
-    )?;
-    writeln!(
-        writer,
-        "   {} confidence: {}%{}",
-        "=".style(colors.gutter),
+        "{}: confidence {}%{}",
+        "note".style(colors.dim),
         (verdict.confidence * 100.0) as u32,
-        if verdict.cached { " (cached)" } else { "" },
+        cached_note,
     )?;
     writeln!(writer)?;
 
@@ -427,7 +494,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     #[allow(deprecated)]
     fn reporter_stylesheet_color_disabled_by_no_color() {
         // SAFETY: This test sets NO_COLOR env var. Tests run in separate processes by default
@@ -443,7 +509,7 @@ mod tests {
         let report = make_test_report(OverallVerdict::Pass);
         let colors = Stylesheet::new(false);
         let mut out = Vec::new();
-        print_report(&report, OutputFormat::Text, false, &mut out, &colors).unwrap();
+        print_report(&report, OutputFormat::Text, false, None, &mut out, &colors).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("files passed"));
     }
@@ -453,7 +519,7 @@ mod tests {
         let report = make_test_report(OverallVerdict::Fail);
         let colors = Stylesheet::new(false);
         let mut out = Vec::new();
-        print_report(&report, OutputFormat::Json, false, &mut out, &colors).unwrap();
+        print_report(&report, OutputFormat::Json, false, None, &mut out, &colors).unwrap();
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
         assert_eq!(json["overall_verdict"], "fail");
     }
@@ -463,7 +529,15 @@ mod tests {
         let report = make_test_report(OverallVerdict::Pass);
         let colors = Stylesheet::new(false);
         let mut out = Vec::new();
-        print_report(&report, OutputFormat::Github, false, &mut out, &colors).unwrap();
+        print_report(
+            &report,
+            OutputFormat::Github,
+            false,
+            None,
+            &mut out,
+            &colors,
+        )
+        .unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("<!-- agent-rules-report"));
     }

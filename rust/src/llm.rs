@@ -128,6 +128,7 @@ impl AnthropicClient {
                         confidence: 0.0,
                         reasoning: "LLM call failed".to_string(),
                         severity: rule.severity,
+                        line_refs: vec![],
                         line: None,
                         cached: false,
                     })
@@ -247,6 +248,10 @@ impl AnthropicClient {
                         .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
                         .unwrap_or_default();
                     let line = line_refs.first().copied().map(|l| l as u32);
+                    let line_refs_u32: Vec<u32> = line_refs
+                        .iter()
+                        .filter_map(|&l| u32::try_from(l).ok())
+                        .collect();
 
                     let (rule_name, severity) = rule_map
                         .get(rule_id)
@@ -260,6 +265,7 @@ impl AnthropicClient {
                         confidence,
                         reasoning,
                         severity,
+                        line_refs: line_refs_u32,
                         line,
                         cached: false,
                     });
@@ -276,6 +282,7 @@ impl AnthropicClient {
                     confidence: 0.0,
                     reasoning: "No verdict received from LLM".to_string(),
                     severity: rule.severity,
+                    line_refs: vec![],
                     line: None,
                     cached: false,
                 });

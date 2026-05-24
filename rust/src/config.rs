@@ -13,6 +13,15 @@ pub const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 /// Default max concurrent stateless calls
 pub const DEFAULT_MAX_CONCURRENT: usize = 10;
 
+/// Default max concurrent agentic escalations
+pub const DEFAULT_MAX_AGENTIC_CONCURRENT: usize = 2;
+
+/// Default model for agentic escalation
+pub const DEFAULT_AGENTIC_MODEL: &str = "claude-sonnet-4-6";
+
+/// Default agentic session timeout in milliseconds
+pub const DEFAULT_AGENTIC_TIMEOUT_MS: u64 = 180_000;
+
 /// Default max file size in bytes
 pub const DEFAULT_MAX_FILE_BYTES: u64 = 100_000;
 
@@ -50,6 +59,12 @@ pub struct CheckConfig {
     pub model: String,
     /// Max concurrent stateless LLM calls
     pub max_concurrent: usize,
+    /// Max concurrent agentic escalations (separate semaphore from stateless)
+    pub max_agentic_concurrent: usize,
+    /// Model for agentic escalation
+    pub agentic_model: String,
+    /// Timeout for agentic sessions (ms)
+    pub agentic_timeout_ms: u64,
     /// Max file size in bytes
     pub max_file_bytes: u64,
     /// Max diff chars to send to LLM
@@ -82,6 +97,9 @@ impl Default for CheckConfig {
             no_cache: false,
             model: DEFAULT_MODEL.to_string(),
             max_concurrent: DEFAULT_MAX_CONCURRENT,
+            max_agentic_concurrent: DEFAULT_MAX_AGENTIC_CONCURRENT,
+            agentic_model: DEFAULT_AGENTIC_MODEL.to_string(),
+            agentic_timeout_ms: DEFAULT_AGENTIC_TIMEOUT_MS,
             max_file_bytes: DEFAULT_MAX_FILE_BYTES,
             max_diff_chars: DEFAULT_MAX_DIFF_CHARS,
             max_content_chars: DEFAULT_MAX_CONTENT_CHARS,

@@ -98,7 +98,11 @@ pub async fn check_pr(infra: &CheckInfra, config: &CheckConfig) -> Result<PRRepo
         progress.set_total(file_diffs.len());
     }
 
-    let semaphore = Arc::new(Semaphore::new(config.max_concurrent));
+    // Two separate semaphores: stateless slots and agentic slots are independent.
+    // The stateless permit is held only during the LLM call; when agentic escalation
+    // is added, the stateless permit must be released before acquiring an agentic slot.
+    let stateless_sem = Arc::new(Semaphore::new(config.max_concurrent));
+    let _agentic_sem = Arc::new(Semaphore::new(config.max_agentic_concurrent));
     let mut tasks: JoinSet<Result<FileVerdict>> = JoinSet::new();
 
     for file_diff in file_diffs {
@@ -108,11 +112,14 @@ pub async fn check_pr(infra: &CheckInfra, config: &CheckConfig) -> Result<PRRepo
             progress: infra.progress.clone(),
         };
         let config = config.clone();
-        let sem = semaphore.clone();
+        let sem = stateless_sem.clone();
 
         tasks.spawn(async move {
             let _permit = sem.acquire().await?;
             check_file(&infra, &config, file_diff).await
+            // _permit dropped here, freeing the stateless slot for the next call.
+            // If agentic escalation is later added, acquire agentic_sem AFTER dropping
+            // this permit so stateless slots aren't blocked during agentic sessions.
         });
     }
 
@@ -320,6 +327,7 @@ mod tests {
                 confidence: 0.9,
                 reasoning: String::new(),
                 severity: Severity::Warn,
+                line_refs: vec![],
                 line: None,
                 cached: false,
             }],
