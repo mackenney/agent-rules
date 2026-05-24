@@ -82,6 +82,8 @@ pub struct CheckConfig {
     pub post_comment: bool,
     /// Strict rule file matching (fail on missing)
     pub strict_rules: bool,
+    /// Allow bash tool in agentic sessions
+    pub allow_bash: bool,
 }
 
 impl Default for CheckConfig {
@@ -109,6 +111,7 @@ impl Default for CheckConfig {
             trace: false,
             post_comment: false,
             strict_rules: false,
+            allow_bash: false,
         }
     }
 }

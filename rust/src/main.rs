@@ -156,6 +156,10 @@ struct CheckArgs {
     /// Strict rule file matching
     #[arg(long)]
     strict_rules: bool,
+
+    /// Allow bash tool in agentic sessions
+    #[arg(long)]
+    allow_bash: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -257,7 +261,12 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         pr_url: args.pr,
         repo_root,
         files: args.files,
-        dir_filters: args.dir_filter,
+        dir_filters: args
+            .dir_filter
+            .iter()
+            .flat_map(|s| s.split(',').map(|p| p.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect(),
         output_format: args.output.into(),
         warn_as_error: args.warn_as_error,
         no_cache: args.no_cache,
@@ -274,11 +283,12 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         trace: args.trace,
         post_comment: args.post_comment,
         strict_rules: args.strict_rules,
+        allow_bash: args.allow_bash,
     };
 
     if config.post_comment {
         if config.pr_url.is_none() {
-            eprintln!("Warning: --post-comment requires --pr to be set; skipping comment");
+            bail!("--post-comment requires --pr to be set");
         } else if std::env::var("GITHUB_TOKEN").is_err() {
             bail!("GITHUB_TOKEN not set (required for --post-comment)");
         } else {
