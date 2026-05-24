@@ -121,6 +121,14 @@ fn print_text_report<W: Write>(
         }
     }
 
+    violations.sort_by(|(fa, va), (fb, vb)| {
+        fa.file_path.cmp(&fb.file_path).then_with(|| {
+            let line_a = va.line_refs.first().copied().or(va.line).unwrap_or(0);
+            let line_b = vb.line_refs.first().copied().or(vb.line).unwrap_or(0);
+            line_a.cmp(&line_b)
+        })
+    });
+
     for (file, verdict) in &violations {
         if verbose {
             print_verbose_violation(file, verdict, repo_root, writer, colors)?;
@@ -284,13 +292,21 @@ fn print_summary<W: Write>(
     writer: &mut W,
     colors: &Stylesheet,
 ) -> std::io::Result<()> {
+    let cache_part = if report.cache_hits > 0 {
+        format!(", {} cached", report.cache_hits)
+    } else {
+        String::new()
+    };
+
     if report.overall_verdict == OverallVerdict::Pass {
         writeln!(
             writer,
-            "{} {} files passed ({} cached)",
+            "{} {} files passed ({}, {}ms{})",
             "✓".style(colors.success),
             report.files_checked,
-            report.cache_hits,
+            report.model,
+            report.duration_ms,
+            cache_part,
         )?;
     } else {
         let error_count = report
@@ -318,7 +334,7 @@ fn print_summary<W: Write>(
 
         writeln!(
             writer,
-            "{} Found {} issue{} ({} error{}, {} warning{}) in {} file{} ({} cached)",
+            "{} Found {} issue{} ({} error{}, {} warning{}) in {} file{} ({}, {}ms{})",
             "✗".style(verdict_style),
             error_count + warn_count,
             if error_count + warn_count == 1 {
@@ -332,7 +348,9 @@ fn print_summary<W: Write>(
             if warn_count == 1 { "" } else { "s" },
             report.files_checked,
             if report.files_checked == 1 { "" } else { "s" },
-            report.cache_hits,
+            report.model,
+            report.duration_ms,
+            cache_part,
         )?;
     }
 
@@ -340,13 +358,20 @@ fn print_summary<W: Write>(
 }
 
 fn print_github_report<W: Write>(report: &PRReport, writer: &mut W) -> std::io::Result<()> {
-    let (icon, title) = match report.overall_verdict {
-        OverallVerdict::Pass => ("✅", "All checks passed"),
-        OverallVerdict::Warn => ("⚠️", "Checks passed with warnings"),
-        OverallVerdict::Fail => ("❌", "Some checks failed"),
+    let (icon, verdict_code) = match report.overall_verdict {
+        OverallVerdict::Pass => ("✅", "PASS"),
+        OverallVerdict::Warn => ("⚠️", "WARN"),
+        OverallVerdict::Fail => ("❌", "FAIL"),
     };
 
-    writeln!(writer, "## {} {}", icon, title)?;
+    writeln!(writer, "## {} agent-rules — {}", icon, verdict_code)?;
+    writeln!(writer)?;
+
+    let pr_label = match &report.pr_url {
+        Some(url) => url.clone(),
+        None => format!("`{}..{}`", report.base_ref, report.head_ref),
+    };
+    writeln!(writer, "**PR:** {}", pr_label)?;
     writeln!(writer)?;
 
     writeln!(
@@ -399,11 +424,7 @@ fn print_github_report<W: Write>(report: &PRReport, writer: &mut W) -> std::io::
     }
 
     writeln!(writer)?;
-    writeln!(
-        writer,
-        "<!-- agent-rules-report base={} head={} -->",
-        report.base_ref, report.head_ref
-    )?;
+    writeln!(writer, "<!-- agent-rules-report -->")?;
 
     Ok(())
 }
