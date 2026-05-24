@@ -228,7 +228,7 @@ impl FileVerdict {
                 Severity::Error => 1,
                 Severity::Warn => 0,
             });
-        let cached = verdicts.iter().any(|v| v.cached);
+        let cached = !verdicts.is_empty() && verdicts.iter().all(|v| v.cached);
 
         Self {
             file_path,
@@ -286,4 +286,65 @@ pub struct FileDiff {
     pub is_new: bool,
     pub is_oversized: bool,
     pub oversized_bytes: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_verdict(cached: bool) -> RuleVerdict {
+        RuleVerdict {
+            rule_id: "test".to_string(),
+            rule_name: "Test".to_string(),
+            verdict: Verdict::Pass,
+            confidence: 1.0,
+            reasoning: String::new(),
+            severity: Severity::Warn,
+            line_refs: vec![],
+            line: None,
+            cached,
+        }
+    }
+
+    #[test]
+    fn test_cached_flag_all_cached() {
+        let v1 = make_verdict(true);
+        let v2 = make_verdict(true);
+        let fv = FileVerdict::new("test.rs".to_string(), vec![v1, v2]);
+        assert!(
+            fv.cached,
+            "file should be cached when ALL verdicts are cached"
+        );
+    }
+
+    #[test]
+    fn test_cached_flag_one_uncached() {
+        let v1 = make_verdict(true);
+        let v2 = make_verdict(false);
+        let fv = FileVerdict::new("test.rs".to_string(), vec![v1, v2]);
+        assert!(
+            !fv.cached,
+            "file should NOT be cached when ANY verdict is uncached"
+        );
+    }
+
+    #[test]
+    fn test_cached_flag_empty_verdicts() {
+        let fv = FileVerdict::new("test.rs".to_string(), vec![]);
+        assert!(
+            !fv.cached,
+            "file with no verdicts should not be marked cached"
+        );
+    }
+
+    #[test]
+    fn test_cached_flag_all_uncached() {
+        let v1 = make_verdict(false);
+        let v2 = make_verdict(false);
+        let fv = FileVerdict::new("test.rs".to_string(), vec![v1, v2]);
+        assert!(
+            !fv.cached,
+            "file should not be cached when no verdicts are cached"
+        );
+    }
 }
