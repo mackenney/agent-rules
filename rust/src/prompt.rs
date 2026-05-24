@@ -55,13 +55,15 @@ pub fn build_user_prompt(
         prompt.push_str("This is a newly added file.\n\n");
     }
 
-    prompt.push_str("CHANGED LINES (unified diff with absolute new-file line numbers):\n\n");
-    prompt.push_str("```diff\n");
-    prompt.push_str(diff);
-    if !diff.ends_with('\n') {
-        prompt.push('\n');
+    if !diff.is_empty() {
+        prompt.push_str("CHANGED LINES (unified diff with absolute new-file line numbers):\n\n");
+        prompt.push_str("```diff\n");
+        prompt.push_str(diff);
+        if !diff.ends_with('\n') {
+            prompt.push('\n');
+        }
+        prompt.push_str("```\n");
     }
-    prompt.push_str("```\n");
 
     if let Some(content) = content {
         prompt.push_str(
@@ -134,6 +136,81 @@ pub fn truncate_to_chars(content: &str, max_chars: usize) -> String {
     } else {
         format!("{}... (truncated)", truncated)
     }
+}
+
+/// Build the task prompt for an agentic evaluation session
+///
+/// The pi subprocess reads this as the task to perform, including
+/// context hints from the stateless pass and instructions to emit
+/// a final JSON verdict.
+pub fn build_agentic_task(
+    file_path: &str,
+    diff: &str,
+    content: Option<&str>,
+    rule: &Rule,
+    hints: &[crate::schema::ContextHint],
+) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    parts.push(format!("FILE: {}", file_path));
+
+    parts.push("\nCHANGED LINES (unified diff with absolute new-file line numbers):\n".to_string());
+    parts.push(format!("```diff\n{}\n```", diff));
+
+    if let Some(c) = content {
+        parts.push(
+            "\nFULL FILE CONTENT (each line prefixed \"N | \"; use N verbatim in line_refs):\n"
+                .to_string(),
+        );
+        parts.push(format!("```\n{}\n```", add_line_numbers(c)));
+    }
+
+    parts.push("\nRULE TO EVALUATE:".to_string());
+    parts.push(build_rule_section(rule));
+
+    if !hints.is_empty() {
+        let mut hint_lines: Vec<String> = Vec::new();
+        for h in hints {
+            if !h.read_files.is_empty() {
+                hint_lines.push(format!(
+                    "Suggested files to read: {}",
+                    h.read_files.join(", ")
+                ));
+            }
+            if !h.question.is_empty() {
+                hint_lines.push(format!("Question to answer: {}", h.question));
+            }
+        }
+        if !hint_lines.is_empty() {
+            parts.push(format!(
+                "\nContext hints from stateless pass:\n{}",
+                hint_lines.join("\n")
+            ));
+        }
+    }
+
+    parts.push(
+        "\nIMPORTANT: Use your file-reading tools to gather whatever context you need, then\n"
+            .to_string(),
+    );
+    parts.push(
+        "emit your verdict. Your FINAL message must be EXACTLY the following JSON object\n"
+            .to_string(),
+    );
+    parts.push(
+        "and nothing else \u{2014} no preamble, no explanation, no markdown fences:\n\n"
+            .to_string(),
+    );
+    parts.push(
+        r#"{"reasoning":"<1-3 sentences>","line_refs":[],"confidence":0.0,"verdict":"pass|fail"}"#
+            .to_string(),
+    );
+    parts.push(
+        "\n\nDo NOT emit needs-more-context. You must reach a terminal verdict (pass/fail)."
+            .to_string(),
+    );
+
+    parts.join("\n")
 }
 
 #[cfg(test)]

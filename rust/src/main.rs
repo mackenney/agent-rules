@@ -2,6 +2,7 @@
 //!
 //! Check PR diffs against LLM-powered rules defined in .agent-rules.toml files.
 
+mod agentic;
 mod cache;
 mod config;
 mod evaluator;
