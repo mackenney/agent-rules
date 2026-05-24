@@ -7,7 +7,7 @@ use std::time::Duration;
 use thiserror::Error;
 
 use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
-use crate::schema::{ContextHint, Rule, RuleVerdict, Verdict};
+use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
@@ -210,7 +210,7 @@ impl AnthropicClient {
                         .and_then(|v| v.as_str())
                         .unwrap_or("fail");
 
-                    let verdict = match verdict_str {
+                    let mut verdict = match verdict_str {
                         "pass" => Verdict::Pass,
                         "needs-more-context" => Verdict::NeedsMoreContext,
                         _ => Verdict::Fail,
@@ -226,6 +226,18 @@ impl AnthropicClient {
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
+
+                    let reasoning = if verdict == Verdict::NeedsMoreContext
+                        && rule.context == RuleContext::Stateless
+                    {
+                        verdict = Verdict::Fail;
+                        format!(
+                            "{} [collapsed from needs-more-context: stateless rule]",
+                            reasoning.trim()
+                        )
+                    } else {
+                        reasoning
+                    };
 
                     let line_refs: Vec<u64> = input
                         .get("line_refs")
@@ -341,7 +353,7 @@ struct ContentBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::Severity;
+    use crate::schema::{RuleContext, Severity};
 
     #[test]
     fn test_llm_error_retryable() {
@@ -420,5 +432,99 @@ mod tests {
         assert_eq!(verdict.verdict, Verdict::Pass);
         assert_eq!(verdict.confidence, 0.9);
         assert_eq!(verdict.rule_id, "rule-1");
+    }
+
+    #[test]
+    fn test_nmc_collapse_stateless_rule() {
+        let client = AnthropicClient::new("test-key".to_string()).unwrap();
+
+        let input = serde_json::json!({
+            "verdict": "needs-more-context",
+            "confidence": 0.5,
+            "reasoning": "Need to check imports",
+            "line_refs": [],
+            "context_hint": {
+                "read_files": ["src/utils.rs"],
+                "question": "What does utils export?"
+            }
+        });
+
+        let response = MessagesResponse {
+            content: vec![ContentBlock {
+                type_: "tool_use".to_string(),
+                name: Some("submit_verdict".to_string()),
+                input: Some(input),
+                text: None,
+            }],
+            stop_reason: Some("tool_use".to_string()),
+        };
+
+        let rule = Rule {
+            id: "test-rule".to_string(),
+            name: "Test Rule".to_string(),
+            prompt: "test".to_string(),
+            severity: Severity::Warn,
+            enabled: true,
+            context: RuleContext::Stateless,
+            glob_include: vec![],
+            glob_exclude: vec![],
+            examples: vec![],
+            needs_more_context_when: String::new(),
+        };
+
+        let verdict = client.parse_verdict(&response, &rule).unwrap();
+
+        assert_eq!(verdict.verdict, Verdict::Fail);
+        assert!(
+            verdict
+                .reasoning
+                .contains("[collapsed from needs-more-context: stateless rule]"),
+            "reasoning should contain collapse annotation: {}",
+            verdict.reasoning
+        );
+        assert!(verdict.context_hint.is_some());
+    }
+
+    #[test]
+    fn test_nmc_not_collapsed_agentic_rule() {
+        let client = AnthropicClient::new("test-key".to_string()).unwrap();
+
+        let input = serde_json::json!({
+            "verdict": "needs-more-context",
+            "confidence": 0.5,
+            "reasoning": "Need to check imports",
+            "line_refs": []
+        });
+
+        let response = MessagesResponse {
+            content: vec![ContentBlock {
+                type_: "tool_use".to_string(),
+                name: Some("submit_verdict".to_string()),
+                input: Some(input),
+                text: None,
+            }],
+            stop_reason: Some("tool_use".to_string()),
+        };
+
+        let rule = Rule {
+            id: "test-rule".to_string(),
+            name: "Test Rule".to_string(),
+            prompt: "test".to_string(),
+            severity: Severity::Warn,
+            enabled: true,
+            context: RuleContext::Agentic,
+            glob_include: vec![],
+            glob_exclude: vec![],
+            examples: vec![],
+            needs_more_context_when: String::new(),
+        };
+
+        let verdict = client.parse_verdict(&response, &rule).unwrap();
+
+        assert_eq!(verdict.verdict, Verdict::NeedsMoreContext);
+        assert!(
+            !verdict.reasoning.contains("collapsed"),
+            "reasoning should not have collapse annotation for agentic rule"
+        );
     }
 }
