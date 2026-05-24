@@ -4,6 +4,7 @@
 
 mod cache;
 mod config;
+mod evaluator;
 mod git;
 mod llm;
 mod parser;
@@ -14,7 +15,7 @@ mod resolver;
 mod runner;
 mod schema;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
@@ -22,13 +23,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::cache::{Cache, CacheManager};
-use crate::config::{get_api_key, CheckConfig, OutputFormat};
+use crate::config::{CheckConfig, OutputFormat, get_api_key};
 use crate::git::get_repo_root;
-use crate::parser::{parse_rule_file, validate_rule, RULE_FILE_NAME};
-use crate::progress::{create_progress_reporter, NullProgress};
-use crate::reporter::{exit_code_for_report, print_report, Stylesheet};
+use crate::parser::{RULE_FILE_NAME, parse_rule_file, validate_rule};
+use crate::progress::{NullProgress, create_progress_reporter};
+use crate::reporter::{Stylesheet, exit_code_for_report, print_report};
 use crate::resolver::{find_all_rule_files, resolve_rules_for_file};
-use crate::runner::{check_pr, CheckInfra};
+use crate::runner::{CheckInfra, check_pr};
 use crate::schema::Severity;
 
 /// Check PR diffs against LLM-powered rules
