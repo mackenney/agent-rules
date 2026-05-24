@@ -82,6 +82,7 @@ impl AnthropicClient {
     /// Evaluate a file against a single rule, returning one verdict
     ///
     /// Backward-compatible wrapper; prefer using `StatelessEvaluator` for new code.
+    #[allow(dead_code)]
     #[allow(clippy::too_many_arguments)]
     pub async fn evaluate(
         &self,

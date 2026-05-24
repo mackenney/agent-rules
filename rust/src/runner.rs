@@ -11,26 +11,34 @@ use tokio::task::JoinSet;
 
 use crate::cache::{Cache, CacheManager, NullCache};
 use crate::config::CheckConfig;
+use crate::evaluator::{AgenticEvalOpts, AgenticEvaluator, StatelessEvalOpts, StatelessEvaluator};
 use crate::git::{get_changed_files, get_file_content, is_binary_extension};
-use crate::llm::AnthropicClient;
 use crate::parser::annotate_diff;
 use crate::progress::ProgressReporter;
 use crate::resolver::resolve_rules_for_file;
-use crate::schema::{FileDiff, FileVerdict, OverallVerdict, PRReport, Severity, Verdict};
+use crate::schema::{
+    FileDiff, FileVerdict, OverallVerdict, PRReport, RuleContext, Severity, Verdict,
+};
 
 /// Infrastructure for running checks
 pub struct CheckInfra {
-    pub llm: Arc<AnthropicClient>,
+    /// Stateless evaluator (required)
+    pub stateless: Arc<dyn StatelessEvaluator>,
+    /// Agentic evaluator (optional — when absent, NMC on agentic rules collapses to fail)
+    pub agentic: Option<Arc<dyn AgenticEvaluator>>,
+    /// Cache implementation
     pub cache: Arc<dyn Cache>,
+    /// Progress reporter
     pub progress: Option<Arc<dyn ProgressReporter>>,
 }
 
 impl CheckInfra {
-    pub fn new(api_key: String, no_cache: bool, repo_root: &std::path::Path) -> Result<Self> {
-        let llm = Arc::new(
-            AnthropicClient::new(api_key)
-                .map_err(|e| anyhow::anyhow!("failed to create Anthropic client: {}", e))?,
-        );
+    pub fn new(
+        stateless: Arc<dyn StatelessEvaluator>,
+        agentic: Option<Arc<dyn AgenticEvaluator>>,
+        no_cache: bool,
+        repo_root: &std::path::Path,
+    ) -> Result<Self> {
         let cache: Arc<dyn Cache> = if no_cache {
             Arc::new(NullCache)
         } else {
@@ -38,7 +46,8 @@ impl CheckInfra {
         };
 
         Ok(Self {
-            llm,
+            stateless,
+            agentic,
             cache,
             progress: None,
         })
@@ -110,7 +119,8 @@ pub async fn check_pr(infra: &CheckInfra, config: &CheckConfig) -> Result<PRRepo
 
     for file_diff in file_diffs {
         let infra = CheckInfra {
-            llm: infra.llm.clone(),
+            stateless: infra.stateless.clone(),
+            agentic: infra.agentic.clone(),
             cache: infra.cache.clone(),
             progress: infra.progress.clone(),
         };
@@ -225,9 +235,6 @@ pub async fn check_file(
     let annotated_diff = annotate_diff(&file_diff.diff, total_lines);
     let timeout = Duration::from_millis(config.timeout_ms);
 
-    // One LLM call per rule — matches the TypeScript implementation.
-    // Per-rule cache keys mean individual rule results are reused across runs
-    // even when the set of rules for a file changes.
     let mut verdicts = Vec::new();
     let mut all_cached = true;
 
@@ -251,21 +258,74 @@ pub async fn check_file(
             progress.on_call_start(&label);
         }
 
-        let verdict = infra
-            .llm
+        let stateless_opts = StatelessEvalOpts {
+            model: config.model.clone(),
+            timeout,
+            max_diff_chars: config.max_diff_chars,
+            max_content_chars: config.max_content_chars,
+            trace: config.trace,
+            cache_system_prompt: rules.len() > 1,
+            cache_file_context: rules.len() > 1,
+        };
+
+        let mut verdict = infra
+            .stateless
             .evaluate(
                 &file_path,
                 &annotated_diff,
                 file_diff.content.as_deref(),
                 rule,
                 file_diff.is_new,
-                &config.model,
-                config.max_diff_chars,
-                config.max_content_chars,
-                timeout,
+                &stateless_opts,
             )
             .await
-            .map_err(|e| anyhow::anyhow!("LLM evaluation failed: {e}"))?;
+            .map_err(|e| anyhow::anyhow!("Stateless evaluation failed: {}", e))?;
+
+        if verdict.verdict == Verdict::NeedsMoreContext && rule.context == RuleContext::Agentic {
+            if let Some(agentic) = &infra.agentic {
+                let hints = verdict
+                    .context_hint
+                    .as_ref()
+                    .map(|h| vec![h.clone()])
+                    .unwrap_or_default();
+
+                let agentic_opts = AgenticEvalOpts {
+                    model: config.agentic_model.clone(),
+                    timeout: Duration::from_millis(config.agentic_timeout_ms),
+                    allow_bash: config.allow_bash,
+                    trace: config.trace,
+                };
+
+                verdict = agentic
+                    .evaluate(
+                        &file_path,
+                        &annotated_diff,
+                        file_diff.content.as_deref(),
+                        rule,
+                        &hints,
+                        &config.repo_root,
+                        &agentic_opts,
+                    )
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Agentic evaluation failed: {}", e))?;
+
+                verdict.from_agentic = true;
+
+                if verdict.verdict == Verdict::NeedsMoreContext {
+                    verdict.verdict = Verdict::Fail;
+                    verdict.reasoning = format!(
+                        "{} [collapsed from needs-more-context: agentic returned NMC]",
+                        verdict.reasoning.trim()
+                    );
+                }
+            } else {
+                verdict.verdict = Verdict::Fail;
+                verdict.reasoning = format!(
+                    "{} [collapsed from needs-more-context: no agentic evaluator]",
+                    verdict.reasoning.trim()
+                );
+            }
+        }
 
         let rule_file_verdict = FileVerdict::new(file_path.clone(), vec![verdict.clone()]);
         infra.cache.put(

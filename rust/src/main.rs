@@ -33,6 +33,10 @@ use crate::resolver::{find_all_rule_files, resolve_rules_for_file};
 use crate::runner::{CheckInfra, check_pr};
 use crate::schema::Severity;
 
+use crate::agentic::PiAgenticEvaluator;
+use crate::evaluator::{AgenticEvaluator, StatelessEvaluator};
+use crate::llm::AnthropicClient;
+
 /// Check PR diffs against LLM-powered rules
 #[derive(Parser)]
 #[command(name = "agent-rules")]
@@ -302,7 +306,18 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         eprintln!("Note: --strict-rules is not yet implemented; ignoring");
     }
 
-    let infra = CheckInfra::new(api_key, config.no_cache, &config.repo_root)?;
+    let stateless: Arc<dyn StatelessEvaluator> = Arc::new(
+        AnthropicClient::new(api_key.clone())
+            .map_err(|e| anyhow::anyhow!("failed to create Anthropic client: {}", e))?,
+    );
+    let agentic: Option<Arc<dyn AgenticEvaluator>> = match PiAgenticEvaluator::new(api_key) {
+        Ok(e) => Some(Arc::new(e)),
+        Err(e) => {
+            eprintln!("Warning: agentic evaluator unavailable: {}", e);
+            None
+        }
+    };
+    let infra = CheckInfra::new(stateless, agentic, config.no_cache, &config.repo_root)?;
 
     let infra = if config.output_format == OutputFormat::Json {
         infra.with_progress(Arc::new(NullProgress))
