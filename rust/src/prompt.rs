@@ -123,7 +123,7 @@ pub fn build_tool_schema() -> serde_json::Value {
 
 /// Truncate content to max chars, preserving line boundaries
 pub fn truncate_to_chars(content: &str, max_chars: usize) -> String {
-    if content.len() <= max_chars {
+    if content.chars().count() <= max_chars {
         return content.to_string();
     }
 
@@ -228,5 +228,25 @@ mod tests {
             !section.contains("test-rule"),
             "rule id should not appear in section"
         );
+    }
+    #[test]
+    fn test_truncate_multibyte_chars() {
+        // "日本語" is 3 characters but 9 bytes
+        let content = "日本語";
+
+        // Should NOT truncate at max_chars=3 (it's exactly 3 chars)
+        let result = truncate_to_chars(content, 3);
+        assert_eq!(
+            result, content,
+            "3-char content at max_chars=3 should not truncate"
+        );
+
+        // Should truncate at max_chars=2
+        let result = truncate_to_chars(content, 2);
+        assert!(
+            result.contains("truncated"),
+            "should truncate when chars > max"
+        );
+        assert_eq!(result.chars().take(2).collect::<String>(), "日本");
     }
 }
