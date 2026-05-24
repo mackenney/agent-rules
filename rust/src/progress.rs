@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// Progress reporter trait.
 ///
 /// Methods are per-rule-call (one call = one rule × one file), not per-file.
+#[allow(dead_code)] // add_total and log reserved for dynamic total updates and trace logging
 pub trait ProgressReporter: Send + Sync {
     fn set_total(&self, n: usize);
     fn add_total(&self, n: usize);

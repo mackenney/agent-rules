@@ -107,18 +107,6 @@ impl CacheManager {
         Ok(Self { cache_dir })
     }
 
-    /// Generate a cache key for a file check request (delegates to module-level function).
-    pub fn key_for(
-        &self,
-        file_path: &str,
-        content: Option<&str>,
-        diff: &str,
-        rules: &[Rule],
-        model: &str,
-    ) -> String {
-        compute_cache_key(file_path, content, diff, rules, model)
-    }
-
     fn entry_path(&self, key: &str) -> PathBuf {
         self.cache_dir.join(format!("{}.json", key))
     }
@@ -229,10 +217,10 @@ impl Cache for CacheManager {
             let entry = entry?;
             let path = entry.path();
 
-            if path.extension().map(|e| e == "json").unwrap_or(false) {
-                if std::fs::remove_file(&path).is_ok() {
-                    count += 1;
-                }
+            if path.extension().map(|e| e == "json").unwrap_or(false)
+                && std::fs::remove_file(&path).is_ok()
+            {
+                count += 1;
             }
         }
 

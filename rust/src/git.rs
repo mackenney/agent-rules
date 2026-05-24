@@ -121,31 +121,6 @@ pub fn get_changed_files(
     Ok(files)
 }
 
-/// Get diff for a specific file
-pub fn get_file_diff(
-    base_ref: &str,
-    head_ref: &str,
-    file_path: &str,
-    cwd: &Path,
-) -> Result<String> {
-    run_git(&["diff", base_ref, head_ref, "--", file_path], cwd)
-}
-
-/// Get file content at a specific ref
-pub fn get_file_at_ref(ref_: &str, file_path: &str, cwd: &Path) -> Option<String> {
-    let spec = format!("{}:{}", ref_, file_path);
-    run_git_optional(&["show", &spec], cwd)
-}
-
-/// Count total lines in a file (for diff annotation width calculation)
-pub fn count_file_lines(content: &str) -> usize {
-    if content.is_empty() {
-        0
-    } else {
-        content.lines().count()
-    }
-}
-
 /// Read a local file, returning None if it exceeds max_bytes or is not valid UTF-8
 pub fn get_file_content(path: &Path, max_bytes: u64) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
@@ -166,13 +141,5 @@ mod tests {
         assert!(is_binary_extension("path/to/doc.pdf"));
         assert!(!is_binary_extension("code.rs"));
         assert!(!is_binary_extension("Makefile"));
-    }
-
-    #[test]
-    fn test_count_file_lines() {
-        assert_eq!(count_file_lines(""), 0);
-        assert_eq!(count_file_lines("one"), 1);
-        assert_eq!(count_file_lines("one\ntwo"), 2);
-        assert_eq!(count_file_lines("one\ntwo\n"), 2);
     }
 }

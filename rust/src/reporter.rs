@@ -22,6 +22,7 @@ pub struct Stylesheet {
     pub success: Style,
     pub gutter: Style,
     pub vertical_bar: Style,
+    #[allow(dead_code)] // read in tests to assert color state
     enabled: bool,
 }
 
@@ -56,10 +57,6 @@ impl Stylesheet {
                 enabled,
             }
         }
-    }
-
-    pub fn default_enabled() -> Self {
-        Self::new(true)
     }
 }
 

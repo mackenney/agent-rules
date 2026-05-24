@@ -9,11 +9,6 @@ use crate::schema::{ExampleVerdict, Rule};
 /// System prompt (exact TypeScript implementation text)
 pub const SYSTEM_PROMPT: &str = "You are a code review agent. Your job is to evaluate a source file against one or more rules\nand call submit_verdict with your evaluation for EACH rule.\n\nVerdict meanings:\n- \"pass\": the code satisfies this rule. No violation found.\n- \"fail\": the code violates this rule.\n- \"needs-more-context\": you cannot determine compliance without reading other files\n  that are not in the diff. Use sparingly \u{2014} only when the answer genuinely depends\n  on external state. Do not use to express uncertainty about borderline cases; use\n  \"fail\" when in doubt.\n  When emitting needs-more-context you MUST populate context_hint.\n\nField guidance:\n- \"confidence\": certainty 0.0\u{2013}1.0. Use < 0.7 when genuinely ambiguous.\n- \"line_refs\": absolute line numbers in the final file (from the numbered FULL FILE\n  CONTENT block). These must match the \" N | \" prefix shown on each line. Empty for pass.\n- \"context_hint\": required only for needs-more-context.\n- If the rule doesn't apply to this file type, return \"pass\" with confidence 1.0.\n- Prefer concrete verdicts over needs-more-context when you have reasonable evidence.\n- Call submit_verdict once for EACH rule listed in the prompt.";
 
-/// Returns the system prompt string
-pub fn build_system_prompt() -> &'static str {
-    SYSTEM_PROMPT
-}
-
 /// Build the formatted section for a single rule
 pub fn build_rule_section(n: usize, rule: &Rule) -> String {
     let mut s = format!("Rule {}: {}\n", n, rule.id);
@@ -222,7 +217,7 @@ mod tests {
 
     #[test]
     fn test_build_system_prompt() {
-        let prompt = build_system_prompt();
+        let prompt = SYSTEM_PROMPT;
         assert!(prompt.contains("submit_verdict"));
         assert!(prompt.contains("needs-more-context"));
     }

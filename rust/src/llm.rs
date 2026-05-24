@@ -73,14 +73,8 @@ impl AnthropicClient {
         }
     }
 
-    /// Create client with a custom base URL (for testing)
-    pub fn with_base_url(api_key: String, base_url: String) -> Self {
-        let mut c = Self::new(api_key);
-        c.base_url = base_url;
-        c
-    }
-
     /// Evaluate a file against rules, returning one verdict per rule
+    #[allow(clippy::too_many_arguments)]
     pub async fn evaluate(
         &self,
         file_path: &str,

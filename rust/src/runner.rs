@@ -349,8 +349,10 @@ mod tests {
 
     #[test]
     fn test_should_skip_dir_filter() {
-        let mut config = CheckConfig::default();
-        config.dir_filters = vec!["src".to_string()];
+        let config = CheckConfig {
+            dir_filters: vec!["src".to_string()],
+            ..Default::default()
+        };
 
         assert!(!should_skip_file("src/main.rs", &config));
         assert!(should_skip_file("tests/test.rs", &config));

@@ -36,6 +36,7 @@ pub const CACHE_VERSION: u32 = 2;
 
 /// Configuration for a check run
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // agentic_* and trace fields reserved for future implementation
 pub struct CheckConfig {
     /// Base git ref (e.g., "main")
     pub base_ref: String,

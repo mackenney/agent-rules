@@ -54,7 +54,7 @@ enum ColorChoice {
 #[derive(Subcommand)]
 enum Commands {
     /// Check files against rules
-    Check(CheckArgs),
+    Check(Box<CheckArgs>),
     /// Cache management
     Cache {
         #[command(subcommand)]
@@ -227,7 +227,7 @@ async fn main() {
     let colors = Stylesheet::new(color_enabled);
 
     let result = match cli.command {
-        Commands::Check(args) => run_check(args, &colors).await,
+        Commands::Check(args) => run_check(*args, &colors).await,
         Commands::Cache { command } => run_cache(command, &colors),
         Commands::Rules { command } => run_rules(command, &colors),
     };
