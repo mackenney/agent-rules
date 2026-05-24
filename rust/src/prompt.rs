@@ -154,8 +154,12 @@ pub fn build_agentic_task(
 
     parts.push(format!("FILE: {}", file_path));
 
-    parts.push("\nCHANGED LINES (unified diff with absolute new-file line numbers):\n".to_string());
-    parts.push(format!("```diff\n{}\n```", diff));
+    if !diff.is_empty() {
+        parts.push(
+            "\nCHANGED LINES (unified diff with absolute new-file line numbers):".to_string(),
+        );
+        parts.push(format!("```diff\n{}\n```", diff));
+    }
 
     if let Some(c) = content {
         parts.push(
@@ -326,5 +330,42 @@ mod tests {
             "should truncate when chars > max"
         );
         assert_eq!(result.chars().take(2).collect::<String>(), "日本");
+    }
+    #[test]
+    fn test_build_agentic_task_no_diff() {
+        let rule = make_test_rule();
+        let task = build_agentic_task("foo.rs", "", None, &rule, &[]);
+        assert!(
+            !task.contains("CHANGED LINES"),
+            "empty diff should not produce CHANGED LINES section"
+        );
+    }
+
+    #[test]
+    fn test_build_agentic_task_basic() {
+        let rule = make_test_rule();
+        let task = build_agentic_task("src/main.rs", "+new line", Some("fn main() {}"), &rule, &[]);
+        assert!(task.contains("FILE: src/main.rs"));
+        assert!(task.contains("CHANGED LINES"));
+        assert!(task.contains("+new line"));
+        assert!(task.contains("FULL FILE CONTENT"));
+        assert!(task.contains("RULE TO EVALUATE"));
+        assert!(task.contains("Test Rule"));
+        assert!(task.contains("needs-more-context"));
+        assert!(task.contains("pass|fail"));
+    }
+
+    #[test]
+    fn test_build_agentic_task_with_hints() {
+        use crate::schema::ContextHint;
+        let rule = make_test_rule();
+        let hints = vec![ContextHint {
+            read_files: vec!["src/utils.rs".to_string()],
+            question: "What does get_config return?".to_string(),
+        }];
+        let task = build_agentic_task("src/main.rs", "", Some("code"), &rule, &hints);
+        assert!(task.contains("Context hints from stateless pass"));
+        assert!(task.contains("What does get_config return?"));
+        assert!(task.contains("src/utils.rs"));
     }
 }
