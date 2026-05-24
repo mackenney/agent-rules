@@ -122,6 +122,7 @@ pub fn build_tool_schema() -> serde_json::Value {
 }
 
 /// Truncate content to max chars, preserving line boundaries
+#[allow(dead_code)]
 pub fn truncate_to_chars(content: &str, max_chars: usize) -> String {
     if content.chars().count() <= max_chars {
         return content.to_string();

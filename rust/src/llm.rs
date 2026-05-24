@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 
-use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt, truncate_to_chars};
+use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
 use crate::schema::{ContextHint, Rule, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://api.anthropic.com";
@@ -86,15 +86,11 @@ impl AnthropicClient {
         rule: &Rule,
         is_new_file: bool,
         model: &str,
-        max_diff_chars: usize,
-        max_content_chars: usize,
+        _max_diff_chars: usize,
+        _max_content_chars: usize,
         timeout: Duration,
     ) -> Result<RuleVerdict, LlmError> {
-        let diff = truncate_to_chars(diff, max_diff_chars);
-        let content = content.map(|c| truncate_to_chars(c, max_content_chars));
-
-        let user_prompt =
-            build_user_prompt(file_path, &diff, content.as_deref(), rule, is_new_file);
+        let user_prompt = build_user_prompt(file_path, diff, content, rule, is_new_file);
 
         let request = MessagesRequest {
             model,

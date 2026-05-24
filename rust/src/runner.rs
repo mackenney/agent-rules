@@ -165,13 +165,6 @@ pub async fn check_file(
     if file_diff.is_deleted {
         return Ok(FileVerdict::skipped(file_path, "deleted file".to_string()));
     }
-    if file_diff.is_oversized {
-        let reason = format!(
-            "file too large ({} bytes)",
-            file_diff.oversized_bytes.unwrap_or(0)
-        );
-        return Ok(FileVerdict::skipped(file_path, reason));
-    }
 
     let file_path_buf = config.repo_root.join(&file_path);
     let rules = resolve_rules_for_file(&file_path_buf, &config.repo_root)
@@ -182,6 +175,46 @@ pub async fn check_file(
             file_path,
             "no matching rules".to_string(),
         ));
+    }
+
+    let diff_chars = file_diff.diff.chars().count();
+    let content_chars = file_diff
+        .content
+        .as_ref()
+        .map(|c| c.chars().count())
+        .unwrap_or(0);
+
+    let mut skip_reasons: Vec<String> = Vec::new();
+
+    if let Some(bytes) = file_diff.oversized_bytes {
+        skip_reasons.push(format!(
+            "byte size ({} bytes) exceeds --max-file-bytes {}",
+            bytes, config.max_file_bytes
+        ));
+    }
+    if diff_chars > config.max_diff_chars {
+        skip_reasons.push(format!(
+            "diff length ({} chars) exceeds --max-diff-chars {}",
+            diff_chars, config.max_diff_chars
+        ));
+    }
+    if content_chars > config.max_content_chars {
+        skip_reasons.push(format!(
+            "content length ({} chars) exceeds --max-content-chars {}",
+            content_chars, config.max_content_chars
+        ));
+    }
+
+    if !skip_reasons.is_empty() {
+        for rule in &rules {
+            for reason in &skip_reasons {
+                eprintln!(
+                    "warning: ({}, {}) - file skipped: {}",
+                    rule.id, file_path, reason
+                );
+            }
+        }
+        return Ok(FileVerdict::skipped(file_path, skip_reasons.join("; ")));
     }
 
     let total_lines = file_diff
