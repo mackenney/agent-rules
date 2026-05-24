@@ -5,8 +5,8 @@
 
 use indicatif::{ProgressBar, ProgressStyle};
 use std::io::IsTerminal;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Progress reporter trait.
 ///
@@ -70,8 +70,10 @@ impl ProgressReporter for TtyProgress {
 
     fn on_call_start(&self, label: &str) {
         if let Ok(bar) = self.bar.lock() {
-            let display = if label.len() > 50 {
-                format!("...{}", &label[label.len() - 47..])
+            let char_count = label.chars().count();
+            let display = if char_count > 50 {
+                let suffix: String = label.chars().skip(char_count - 47).collect();
+                format!("...{}", suffix)
             } else {
                 label.to_string()
             };
@@ -163,5 +165,26 @@ mod tests {
     #[test]
     fn progress_reporter_factory_returns_box() {
         let _reporter = create_progress_reporter(10);
+    }
+
+    #[test]
+    fn progress_utf8_label_no_panic() {
+        let p = TtyProgress::new(1);
+        let label = "\u{1F525}".repeat(60); // 60 fire emojis, each 4 bytes
+        p.on_call_start(&label);
+    }
+
+    #[test]
+    fn progress_cjk_label_no_panic() {
+        let p = TtyProgress::new(1);
+        let label = "日本語テスト".repeat(15); // 90 characters, 270 bytes
+        p.on_call_start(&label);
+    }
+
+    #[test]
+    fn progress_short_label_unchanged() {
+        let p = TtyProgress::new(1);
+        let label = "short";
+        p.on_call_start(label);
     }
 }
