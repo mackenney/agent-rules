@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 
-use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt, truncate_to_chars};
-use crate::schema::{Rule, RuleVerdict, Severity, Verdict};
+use crate::prompt::{build_tool_schema, build_user_prompt, truncate_to_chars, SYSTEM_PROMPT};
+use crate::schema::{Rule, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
@@ -73,25 +73,25 @@ impl AnthropicClient {
         }
     }
 
-    /// Evaluate a file against rules, returning one verdict per rule
+    /// Evaluate a file against a single rule, returning one verdict
     #[allow(clippy::too_many_arguments)]
     pub async fn evaluate(
         &self,
         file_path: &str,
         diff: &str,
         content: Option<&str>,
-        rules: &[Rule],
+        rule: &Rule,
         is_new_file: bool,
         model: &str,
         max_diff_chars: usize,
         max_content_chars: usize,
         timeout: Duration,
-    ) -> Result<Vec<RuleVerdict>, LlmError> {
+    ) -> Result<RuleVerdict, LlmError> {
         let diff = truncate_to_chars(diff, max_diff_chars);
         let content = content.map(|c| truncate_to_chars(c, max_content_chars));
 
         let user_prompt =
-            build_user_prompt(file_path, &diff, content.as_deref(), rules, is_new_file);
+            build_user_prompt(file_path, &diff, content.as_deref(), rule, is_new_file);
 
         let request = MessagesRequest {
             model,
@@ -113,24 +113,21 @@ impl AnthropicClient {
             Ok(r) => r,
             Err(LlmError::Auth(msg)) => return Err(LlmError::Auth(msg)),
             Err(_) => {
-                return Ok(rules
-                    .iter()
-                    .map(|rule| RuleVerdict {
-                        rule_id: rule.id.clone(),
-                        rule_name: rule.name.clone(),
-                        verdict: Verdict::Fail,
-                        confidence: 0.0,
-                        reasoning: "LLM call failed".to_string(),
-                        severity: rule.severity,
-                        line_refs: vec![],
-                        line: None,
-                        cached: false,
-                    })
-                    .collect());
+                return Ok(RuleVerdict {
+                    rule_id: rule.id.clone(),
+                    rule_name: rule.name.clone(),
+                    verdict: Verdict::Fail,
+                    confidence: 0.0,
+                    reasoning: "LLM call failed".to_string(),
+                    severity: rule.severity,
+                    line_refs: vec![],
+                    line: None,
+                    cached: false,
+                });
             }
         };
 
-        self.parse_verdicts(&response, rules)
+        self.parse_verdict(&response, rule)
     }
 
     async fn call_with_retry(
@@ -199,21 +196,14 @@ impl AnthropicClient {
         }
     }
 
-    fn parse_verdicts(
+    fn parse_verdict(
         &self,
         response: &MessagesResponse,
-        rules: &[Rule],
-    ) -> Result<Vec<RuleVerdict>, LlmError> {
-        let mut verdicts: Vec<RuleVerdict> = Vec::new();
-
-        let rule_map: std::collections::HashMap<&str, &Rule> =
-            rules.iter().map(|r| (r.id.as_str(), r)).collect();
-
+        rule: &Rule,
+    ) -> Result<RuleVerdict, LlmError> {
         for block in &response.content {
             if block.type_ == "tool_use" && block.name.as_deref() == Some("submit_verdict") {
                 if let Some(input) = &block.input {
-                    let rule_id = input.get("rule_id").and_then(|v| v.as_str()).unwrap_or("");
-
                     let verdict_str = input
                         .get("verdict")
                         .and_then(|v| v.as_str())
@@ -247,18 +237,13 @@ impl AnthropicClient {
                         .filter_map(|&l| u32::try_from(l).ok())
                         .collect();
 
-                    let (rule_name, severity) = rule_map
-                        .get(rule_id)
-                        .map(|r| (r.name.clone(), r.severity))
-                        .unwrap_or_else(|| (rule_id.to_string(), Severity::Warn));
-
-                    verdicts.push(RuleVerdict {
-                        rule_id: rule_id.to_string(),
-                        rule_name,
+                    return Ok(RuleVerdict {
+                        rule_id: rule.id.clone(),
+                        rule_name: rule.name.clone(),
                         verdict,
                         confidence,
                         reasoning,
-                        severity,
+                        severity: rule.severity,
                         line_refs: line_refs_u32,
                         line,
                         cached: false,
@@ -267,23 +252,17 @@ impl AnthropicClient {
             }
         }
 
-        for rule in rules {
-            if !verdicts.iter().any(|v| v.rule_id == rule.id) {
-                verdicts.push(RuleVerdict {
-                    rule_id: rule.id.clone(),
-                    rule_name: rule.name.clone(),
-                    verdict: Verdict::Fail,
-                    confidence: 0.0,
-                    reasoning: "No verdict received from LLM".to_string(),
-                    severity: rule.severity,
-                    line_refs: vec![],
-                    line: None,
-                    cached: false,
-                });
-            }
-        }
-
-        Ok(verdicts)
+        Ok(RuleVerdict {
+            rule_id: rule.id.clone(),
+            rule_name: rule.name.clone(),
+            verdict: Verdict::Fail,
+            confidence: 0.0,
+            reasoning: "No verdict received from LLM".to_string(),
+            severity: rule.severity,
+            line_refs: vec![],
+            line: None,
+            cached: false,
+        })
     }
 }
 
@@ -336,6 +315,7 @@ struct ContentBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::Severity;
 
     #[test]
     fn test_llm_error_retryable() {
@@ -349,7 +329,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_verdicts_missing_rules() {
+    fn test_parse_verdict_missing_tool_use() {
         let client = AnthropicClient::new("test-key".to_string());
 
         let response = MessagesResponse {
@@ -357,7 +337,7 @@ mod tests {
             stop_reason: Some("end_turn".to_string()),
         };
 
-        let rules = vec![Rule {
+        let rule = Rule {
             id: "rule-1".to_string(),
             name: "Rule 1".to_string(),
             prompt: "test".to_string(),
@@ -368,20 +348,19 @@ mod tests {
             glob_exclude: vec![],
             examples: vec![],
             needs_more_context_when: String::new(),
-        }];
+        };
 
-        let verdicts = client.parse_verdicts(&response, &rules).unwrap();
-        assert_eq!(verdicts.len(), 1);
-        assert_eq!(verdicts[0].verdict, Verdict::Fail);
-        assert!(verdicts[0].reasoning.contains("No verdict"));
+        let verdict = client.parse_verdict(&response, &rule).unwrap();
+        assert_eq!(verdict.verdict, Verdict::Fail);
+        assert!(verdict.reasoning.contains("No verdict"));
+        assert_eq!(verdict.rule_id, "rule-1");
     }
 
     #[test]
-    fn test_parse_verdicts_tool_use() {
+    fn test_parse_verdict_tool_use() {
         let client = AnthropicClient::new("test-key".to_string());
 
         let input = serde_json::json!({
-            "rule_id": "rule-1",
             "verdict": "pass",
             "confidence": 0.9,
             "reasoning": "looks good",
@@ -398,7 +377,7 @@ mod tests {
             stop_reason: Some("tool_use".to_string()),
         };
 
-        let rules = vec![Rule {
+        let rule = Rule {
             id: "rule-1".to_string(),
             name: "Rule 1".to_string(),
             prompt: "test".to_string(),
@@ -409,11 +388,11 @@ mod tests {
             glob_exclude: vec![],
             examples: vec![],
             needs_more_context_when: String::new(),
-        }];
+        };
 
-        let verdicts = client.parse_verdicts(&response, &rules).unwrap();
-        assert_eq!(verdicts.len(), 1);
-        assert_eq!(verdicts[0].verdict, Verdict::Pass);
-        assert_eq!(verdicts[0].confidence, 0.9);
+        let verdict = client.parse_verdict(&response, &rule).unwrap();
+        assert_eq!(verdict.verdict, Verdict::Pass);
+        assert_eq!(verdict.confidence, 0.9);
+        assert_eq!(verdict.rule_id, "rule-1");
     }
 }

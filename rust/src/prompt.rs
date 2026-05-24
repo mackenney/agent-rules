@@ -9,9 +9,9 @@ use crate::schema::{ExampleVerdict, Rule};
 /// System prompt (exact TypeScript implementation text)
 pub const SYSTEM_PROMPT: &str = "You are a code review agent. Your job is to evaluate a source file against one or more rules\nand call submit_verdict with your evaluation for EACH rule.\n\nVerdict meanings:\n- \"pass\": the code satisfies this rule. No violation found.\n- \"fail\": the code violates this rule.\n- \"needs-more-context\": you cannot determine compliance without reading other files\n  that are not in the diff. Use sparingly \u{2014} only when the answer genuinely depends\n  on external state. Do not use to express uncertainty about borderline cases; use\n  \"fail\" when in doubt.\n  When emitting needs-more-context you MUST populate context_hint.\n\nField guidance:\n- \"confidence\": certainty 0.0\u{2013}1.0. Use < 0.7 when genuinely ambiguous.\n- \"line_refs\": absolute line numbers in the final file (from the numbered FULL FILE\n  CONTENT block). These must match the \" N | \" prefix shown on each line. Empty for pass.\n- \"context_hint\": required only for needs-more-context.\n- If the rule doesn't apply to this file type, return \"pass\" with confidence 1.0.\n- Prefer concrete verdicts over needs-more-context when you have reasonable evidence.\n- Call submit_verdict once for EACH rule listed in the prompt.";
 
-/// Build the formatted section for a single rule
-pub fn build_rule_section(n: usize, rule: &Rule) -> String {
-    let mut s = format!("Rule {}: {}\n", n, rule.id);
+/// Build the formatted section for a single rule (matches TS buildRuleSection / serializeRule)
+pub fn build_rule_section(rule: &Rule) -> String {
+    let mut s = String::from("\nRULE TO EVALUATE:\n");
     s.push_str(&format!("  name: {}\n", rule.name));
     s.push_str(&format!("  severity: {}\n", rule.severity));
     s.push_str(&format!("  instruction: {}\n", rule.prompt.trim()));
@@ -39,12 +39,12 @@ pub fn build_rule_section(n: usize, rule: &Rule) -> String {
     s
 }
 
-/// Build the user prompt for a file check
+/// Build the user prompt for a single-rule file check
 pub fn build_user_prompt(
     file_path: &str,
     diff: &str,
     content: Option<&str>,
-    rules: &[Rule],
+    rule: &Rule,
     is_new_file: bool,
 ) -> String {
     let mut prompt = String::new();
@@ -61,44 +61,31 @@ pub fn build_user_prompt(
     if !diff.ends_with('\n') {
         prompt.push('\n');
     }
-    prompt.push_str("```\n\n");
+    prompt.push_str("```\n");
 
     if let Some(content) = content {
         prompt.push_str(
-            "FULL FILE CONTENT (each line prefixed \"N | \"; use N verbatim in line_refs):\n\n",
+            "\nFULL FILE CONTENT (each line prefixed \"N | \"; use N verbatim in line_refs):\n\n",
         );
         prompt.push_str("```\n");
         prompt.push_str(&add_line_numbers(content));
-        prompt.push_str("\n```\n\n");
+        prompt.push_str("\n```");
     }
 
-    prompt.push_str("RULES TO EVALUATE:\n\n");
-    for (i, rule) in rules.iter().enumerate() {
-        prompt.push_str(&build_rule_section(i + 1, rule));
-        prompt.push('\n');
-    }
-
-    let n = rules.len();
-    prompt.push_str(&format!(
-        "\nCall submit_verdict once for EACH rule above. You MUST submit verdicts for all {} rules.",
-        n
-    ));
+    prompt.push_str(&build_rule_section(rule));
 
     prompt
 }
 
 /// Build the tool schema for submit_verdict
+/// Build the tool schema for submit_verdict (no rule_id — one call per rule)
 pub fn build_tool_schema() -> serde_json::Value {
     serde_json::json!({
         "name": "submit_verdict",
-        "description": "Submit your verdict for a rule evaluation",
+        "description": "Submit the rule evaluation verdict as structured data.",
         "input_schema": {
             "type": "object",
             "properties": {
-                "rule_id": {
-                    "type": "string",
-                    "description": "The ID of the rule being evaluated"
-                },
                 "verdict": {
                     "type": "string",
                     "enum": ["pass", "fail", "needs-more-context"],
@@ -112,16 +99,16 @@ pub fn build_tool_schema() -> serde_json::Value {
                 },
                 "reasoning": {
                     "type": "string",
-                    "description": "Brief explanation for your verdict"
+                    "description": "1-3 sentences explaining the verdict, referencing specific code."
                 },
                 "line_refs": {
                     "type": "array",
                     "items": {"type": "integer"},
-                    "description": "Absolute line numbers in the final file where the violation occurs (empty for pass)"
+                    "description": "Absolute line numbers of violations. Empty array for pass."
                 },
                 "context_hint": {
                     "type": "object",
-                    "description": "Required when verdict is needs-more-context.",
+                    "description": "Required only when verdict is needs-more-context.",
                     "properties": {
                         "read_files": { "type": "array", "items": { "type": "string" } },
                         "question": { "type": "string" }
@@ -129,7 +116,7 @@ pub fn build_tool_schema() -> serde_json::Value {
                     "required": ["read_files", "question"]
                 }
             },
-            "required": ["rule_id", "verdict", "confidence", "reasoning", "line_refs"]
+            "required": ["verdict", "confidence", "reasoning", "line_refs"]
         }
     })
 }
@@ -170,12 +157,12 @@ mod tests {
 
     #[test]
     fn test_build_user_prompt_basic() {
-        let rules = vec![make_test_rule()];
+        let rule = make_test_rule();
         let prompt = build_user_prompt(
             "src/main.rs",
             "+new line",
             Some("fn main() {}"),
-            &rules,
+            &rule,
             false,
         );
 
@@ -183,13 +170,21 @@ mod tests {
         assert!(prompt.contains("CHANGED LINES"));
         assert!(prompt.contains("+new line"));
         assert!(prompt.contains("FULL FILE CONTENT"));
-        assert!(prompt.contains("RULES TO EVALUATE"));
-        assert!(prompt.contains("test-rule"));
+        assert!(prompt.contains("RULE TO EVALUATE"));
+        assert!(
+            prompt.contains("Test Rule"),
+            "rule name should be in prompt"
+        );
+        assert!(
+            prompt.contains("Check for test issues"),
+            "rule instruction should be in prompt"
+        );
     }
 
     #[test]
     fn test_build_user_prompt_new_file() {
-        let prompt = build_user_prompt("new.rs", "+content", None, &[], true);
+        let rule = make_test_rule();
+        let prompt = build_user_prompt("new.rs", "+content", None, &rule, true);
         assert!(prompt.contains("newly added file"));
     }
 
@@ -225,8 +220,13 @@ mod tests {
     #[test]
     fn test_build_rule_section() {
         let rule = make_test_rule();
-        let section = build_rule_section(1, &rule);
-        assert!(section.contains("test-rule"));
+        let section = build_rule_section(&rule);
+        assert!(section.contains("RULE TO EVALUATE"));
         assert!(section.contains("Test Rule"));
+        assert!(section.contains("Check for test issues"));
+        assert!(
+            !section.contains("test-rule"),
+            "rule id should not appear in section"
+        );
     }
 }

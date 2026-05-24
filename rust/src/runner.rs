@@ -180,66 +180,79 @@ pub async fn check_file(
         ));
     }
 
-    let cache_key = infra.cache.key_for(
-        &file_path,
-        file_diff.content.as_deref(),
-        &file_diff.diff,
-        &rules,
-        &config.model,
-    );
-
-    if let Some(cached) = infra.cache.get(&cache_key) {
-        if let Some(progress) = &infra.progress {
-            progress.on_call_done(&format!("{}[cached]", file_path));
-        }
-        return Ok(cached);
-    }
-
     let total_lines = file_diff
         .content
         .as_ref()
         .map(|c| c.lines().count())
         .unwrap_or(100);
     let annotated_diff = annotate_diff(&file_diff.diff, total_lines);
-
-    let label = format!("{}[{} rule(s)]", file_path, rules.len());
-    if let Some(progress) = &infra.progress {
-        progress.on_call_start(&label);
-    }
-
     let timeout = Duration::from_millis(config.timeout_ms);
-    let verdicts = infra
-        .llm
-        .evaluate(
+
+    // One LLM call per rule — matches the TypeScript implementation.
+    // Per-rule cache keys mean individual rule results are reused across runs
+    // even when the set of rules for a file changes.
+    let mut verdicts = Vec::new();
+    let mut all_cached = true;
+
+    for rule in &rules {
+        let cache_key = infra.cache.key_for(
             &file_path,
-            &annotated_diff,
             file_diff.content.as_deref(),
-            &rules,
-            file_diff.is_new,
+            &file_diff.diff,
+            std::slice::from_ref(rule),
             &config.model,
-            config.max_diff_chars,
-            config.max_content_chars,
-            timeout,
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("LLM evaluation failed: {e}"))?;
+        );
 
-    let file_verdict = FileVerdict::new(file_path.clone(), verdicts);
+        if let Some(cached_fv) = infra.cache.get(&cache_key) {
+            verdicts.extend(cached_fv.verdicts);
+            continue;
+        }
 
-    let rule_ids: Vec<String> = rules.iter().map(|r| r.id.clone()).collect();
-    infra.cache.put(
-        &cache_key,
-        &file_verdict,
-        &config.model,
-        &file_path,
-        &rule_ids,
-    );
+        all_cached = false;
+        let label = format!("{}[{}]", file_path, rule.id);
+        if let Some(progress) = &infra.progress {
+            progress.on_call_start(&label);
+        }
 
-    if let Some(progress) = &infra.progress {
-        progress.on_call_done(&label);
+        let verdict = infra
+            .llm
+            .evaluate(
+                &file_path,
+                &annotated_diff,
+                file_diff.content.as_deref(),
+                rule,
+                file_diff.is_new,
+                &config.model,
+                config.max_diff_chars,
+                config.max_content_chars,
+                timeout,
+            )
+            .await
+            .map_err(|e| anyhow::anyhow!("LLM evaluation failed: {e}"))?;
+
+        let rule_file_verdict = FileVerdict::new(file_path.clone(), vec![verdict.clone()]);
+        infra.cache.put(
+            &cache_key,
+            &rule_file_verdict,
+            &config.model,
+            &file_path,
+            std::slice::from_ref(&rule.id),
+        );
+
+        if let Some(progress) = &infra.progress {
+            progress.on_call_done(&label);
+        }
+
+        verdicts.push(verdict);
     }
 
-    Ok(file_verdict)
+    if all_cached {
+        if let Some(progress) = &infra.progress {
+            progress.on_call_done(&format!("{}[cached]", file_path));
+        }
+    }
+
+    Ok(FileVerdict::new(file_path.clone(), verdicts))
 }
 
 /// Build a PRReport from collected file verdicts
