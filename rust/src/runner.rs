@@ -142,6 +142,7 @@ pub async fn check_pr(infra: &CheckInfra, config: &CheckConfig) -> Result<PRRepo
         config.base_ref.clone(),
         config.head_ref.clone(),
         config.pr_url.clone(),
+        config.model.clone(),
         file_verdicts,
         duration_ms,
     ))
@@ -260,6 +261,7 @@ fn build_pr_report(
     base_ref: String,
     head_ref: String,
     pr_url: Option<String>,
+    model: String,
     files: Vec<FileVerdict>,
     duration_ms: u64,
 ) -> PRReport {
@@ -292,6 +294,7 @@ fn build_pr_report(
         base_ref,
         head_ref,
         pr_url,
+        model,
         files,
         overall_verdict,
         files_checked,
@@ -381,7 +384,14 @@ mod tests {
 
     #[test]
     fn test_build_pr_report_empty() {
-        let report = build_pr_report("main".to_string(), "HEAD".to_string(), None, vec![], 0);
+        let report = build_pr_report(
+            "main".to_string(),
+            "HEAD".to_string(),
+            None,
+            "test-model".to_string(),
+            vec![],
+            0,
+        );
         assert_eq!(report.files_checked, 0);
         assert_eq!(report.files_skipped, 0);
         assert_eq!(report.overall_verdict, OverallVerdict::Pass);
@@ -393,7 +403,14 @@ mod tests {
             make_file_verdict("a.rs", true),
             make_file_verdict("b.rs", true),
         ];
-        let report = build_pr_report("main".to_string(), "HEAD".to_string(), None, files, 100);
+        let report = build_pr_report(
+            "main".to_string(),
+            "HEAD".to_string(),
+            None,
+            "test-model".to_string(),
+            files,
+            100,
+        );
         assert_eq!(report.files_checked, 2);
         assert_eq!(report.files_passed, 2);
         assert_eq!(report.files_failed, 0);
@@ -405,7 +422,14 @@ mod tests {
     #[test]
     fn test_build_pr_report_with_warn() {
         let files = vec![make_file_verdict("a.rs", false)];
-        let report = build_pr_report("main".to_string(), "HEAD".to_string(), None, files, 0);
+        let report = build_pr_report(
+            "main".to_string(),
+            "HEAD".to_string(),
+            None,
+            "test-model".to_string(),
+            files,
+            0,
+        );
         assert_eq!(report.files_failed, 1);
         assert_eq!(report.overall_verdict, OverallVerdict::Warn);
     }
@@ -414,7 +438,14 @@ mod tests {
     fn test_build_pr_report_with_error() {
         let mut fv = make_file_verdict("a.rs", false);
         fv.max_severity = Some(Severity::Error);
-        let report = build_pr_report("main".to_string(), "HEAD".to_string(), None, vec![fv], 0);
+        let report = build_pr_report(
+            "main".to_string(),
+            "HEAD".to_string(),
+            None,
+            "test-model".to_string(),
+            vec![fv],
+            0,
+        );
         assert_eq!(report.overall_verdict, OverallVerdict::Fail);
     }
 
@@ -425,6 +456,7 @@ mod tests {
             "main".to_string(),
             "HEAD".to_string(),
             None,
+            "test-model".to_string(),
             vec![skipped],
             0,
         );
@@ -437,7 +469,14 @@ mod tests {
     fn test_build_pr_report_cache_hits() {
         let mut fv = make_file_verdict("a.rs", true);
         fv.cached = true;
-        let report = build_pr_report("main".to_string(), "HEAD".to_string(), None, vec![fv], 0);
+        let report = build_pr_report(
+            "main".to_string(),
+            "HEAD".to_string(),
+            None,
+            "test-model".to_string(),
+            vec![fv],
+            0,
+        );
         assert_eq!(report.cache_hits, 1);
     }
 }

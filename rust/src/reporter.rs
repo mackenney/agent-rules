@@ -432,6 +432,7 @@ mod tests {
             base_ref: "main".to_string(),
             head_ref: "HEAD".to_string(),
             pr_url: None,
+            model: "test-model".to_string(),
             files: vec![],
             overall_verdict: overall,
             files_checked: 5,

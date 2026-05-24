@@ -283,6 +283,8 @@ pub struct PRReport {
     pub head_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
+    /// Model used for stateless evaluation
+    pub model: String,
     pub files: Vec<FileVerdict>,
     pub overall_verdict: OverallVerdict,
     pub files_checked: usize,
