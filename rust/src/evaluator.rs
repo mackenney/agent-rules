@@ -1,3 +1,4 @@
+#![allow(dead_code, clippy::too_many_arguments)]
 //! Evaluator protocols: StatelessEvaluator and AgenticEvaluator traits
 //!
 //! These traits abstract the LLM evaluation layer, allowing CheckInfra to
