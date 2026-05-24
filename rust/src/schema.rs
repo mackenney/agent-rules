@@ -86,6 +86,20 @@ fn default_example_verdict() -> ExampleVerdict {
     ExampleVerdict::Pass
 }
 
+/// Serde default for confidence when deserializing old cache entries
+fn confidence_default() -> f64 {
+    1.0
+}
+
+/// Hint for agentic escalation when stateless pass returns needs-more-context
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ContextHint {
+    /// Files the LLM suggests reading to resolve the verdict
+    pub read_files: Vec<String>,
+    /// Question the LLM is trying to answer
+    pub question: String,
+}
+
 /// A rule file (.agent-rules.toml) containing rules and config
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleFile {
@@ -184,6 +198,8 @@ pub struct RuleVerdict {
     pub rule_id: String,
     pub rule_name: String,
     pub verdict: Verdict,
+    /// Confidence 0.0–1.0. Runtime default (LLM omits): 0.5. Serde default (old cache): 1.0.
+    #[serde(default = "confidence_default")]
     pub confidence: f64,
     #[serde(default)]
     pub reasoning: String,
@@ -197,6 +213,12 @@ pub struct RuleVerdict {
     pub line: Option<u32>,
     #[serde(default)]
     pub cached: bool,
+    /// True if this verdict came from the agentic pass
+    #[serde(default)]
+    pub from_agentic: bool,
+    /// Context hint from stateless pass when verdict was needs-more-context
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_hint: Option<ContextHint>,
 }
 
 /// All verdicts for a single file
@@ -303,6 +325,8 @@ mod tests {
             line_refs: vec![],
             line: None,
             cached,
+            from_agentic: false,
+            context_hint: None,
         }
     }
 
@@ -345,6 +369,46 @@ mod tests {
         assert!(
             !fv.cached,
             "file should not be cached when no verdicts are cached"
+        );
+    }
+    #[test]
+    fn test_confidence_serde_default() {
+        let json = r#"{
+            "rule_id": "test",
+            "rule_name": "Test",
+            "verdict": "pass",
+            "reasoning": "",
+            "severity": "warn",
+            "line_refs": [],
+            "cached": false
+        }"#;
+        let verdict: RuleVerdict = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            verdict.confidence, 1.0,
+            "old cache entries should default to confidence 1.0"
+        );
+    }
+
+    #[test]
+    fn test_from_agentic_default() {
+        let json = r#"{
+            "rule_id": "test",
+            "rule_name": "Test",
+            "verdict": "fail",
+            "confidence": 0.8,
+            "reasoning": "reason",
+            "severity": "error",
+            "line_refs": [10],
+            "cached": false
+        }"#;
+        let verdict: RuleVerdict = serde_json::from_str(json).unwrap();
+        assert!(
+            !verdict.from_agentic,
+            "from_agentic should default to false"
+        );
+        assert!(
+            verdict.context_hint.is_none(),
+            "context_hint should default to None"
         );
     }
 }

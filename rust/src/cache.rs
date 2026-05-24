@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::config::{get_cache_dir, CACHE_VERSION};
+use crate::config::{CACHE_VERSION, get_cache_dir};
 use crate::schema::{FileVerdict, Rule};
 
 /// Cache entry stored on disk
@@ -312,6 +312,8 @@ mod tests {
                 line_refs: vec![],
                 line: None,
                 cached: false,
+                from_agentic: false,
+                context_hint: None,
             }],
             passed: true,
             max_severity: None,

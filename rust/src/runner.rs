@@ -343,6 +343,8 @@ mod tests {
                 line_refs: vec![],
                 line: None,
                 cached: false,
+                from_agentic: false,
+                context_hint: None,
             }],
             passed,
             max_severity: if passed { None } else { Some(Severity::Warn) },

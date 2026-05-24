@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 
-use crate::prompt::{build_tool_schema, build_user_prompt, truncate_to_chars, SYSTEM_PROMPT};
-use crate::schema::{Rule, RuleVerdict, Verdict};
+use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt, truncate_to_chars};
+use crate::schema::{ContextHint, Rule, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
@@ -123,6 +123,8 @@ impl AnthropicClient {
                     line_refs: vec![],
                     line: None,
                     cached: false,
+                    from_agentic: false,
+                    context_hint: None,
                 });
             }
         };
@@ -237,6 +239,27 @@ impl AnthropicClient {
                         .filter_map(|&l| u32::try_from(l).ok())
                         .collect();
 
+                    let context_hint =
+                        input
+                            .get("context_hint")
+                            .and_then(|v| v.as_object())
+                            .map(|obj| ContextHint {
+                                read_files: obj
+                                    .get("read_files")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| {
+                                        arr.iter()
+                                            .filter_map(|v| v.as_str().map(String::from))
+                                            .collect()
+                                    })
+                                    .unwrap_or_default(),
+                                question: obj
+                                    .get("question")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string(),
+                            });
+
                     return Ok(RuleVerdict {
                         rule_id: rule.id.clone(),
                         rule_name: rule.name.clone(),
@@ -247,6 +270,8 @@ impl AnthropicClient {
                         line_refs: line_refs_u32,
                         line,
                         cached: false,
+                        from_agentic: false,
+                        context_hint,
                     });
                 }
             }
@@ -262,6 +287,8 @@ impl AnthropicClient {
             line_refs: vec![],
             line: None,
             cached: false,
+            from_agentic: false,
+            context_hint: None,
         })
     }
 }
