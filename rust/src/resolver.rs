@@ -8,7 +8,7 @@ use anyhow::Result;
 use globset::{GlobSet, GlobSetBuilder};
 use std::path::{Path, PathBuf};
 
-use crate::parser::{parse_rule_file, RULE_FILE_NAME};
+use crate::parser::{RULE_FILE_NAME, parse_rule_file};
 use crate::schema::{InheritMode, Rule, RuleFile};
 
 /// Resolve all rules that apply to a given file
@@ -119,10 +119,10 @@ fn merge_rule_files(rule_files: Vec<RuleFile>) -> Vec<Rule> {
         }
     }
 
-    // Filter out disabled rules
+    // Filter out rules in the disable-rules list
     merged_rules.retain(|r| !disabled_ids.contains(&r.id));
 
-    // Filter out disabled rules
+    // Filter out rules with enabled = false
     merged_rules.retain(|r| r.enabled);
 
     merged_rules
@@ -208,7 +208,12 @@ pub fn find_all_rule_files(repo_root: &Path) -> Result<Vec<PathBuf>> {
 
             // Skip hidden directories and common non-source dirs
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with('.') || name == "node_modules" || name == "target" {
+                if name.starts_with('.')
+                    || matches!(
+                        name,
+                        "node_modules" | "target" | "dist" | "__pycache__" | ".next" | ".cache"
+                    )
+                {
                     continue;
                 }
             }
