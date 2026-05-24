@@ -58,19 +58,22 @@ pub struct AnthropicClient {
 
 impl AnthropicClient {
     /// Create a new client with the Anthropic production endpoint
-    pub fn new(api_key: String) -> Self {
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP client cannot be constructed.
+    pub fn new(api_key: String) -> Result<Self, LlmError> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(120))
             .pool_max_idle_per_host(20)
             .pool_idle_timeout(Duration::from_secs(90))
             .build()
-            .expect("failed to build HTTP client");
+            .map_err(|e| LlmError::Request(format!("failed to build HTTP client: {}", e)))?;
 
-        Self {
+        Ok(Self {
             client,
             api_key,
             base_url: API_BASE_URL.to_string(),
-        }
+        })
     }
 
     /// Evaluate a file against a single rule, returning one verdict
@@ -357,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_parse_verdict_missing_tool_use() {
-        let client = AnthropicClient::new("test-key".to_string());
+        let client = AnthropicClient::new("test-key".to_string()).unwrap();
 
         let response = MessagesResponse {
             content: vec![],
@@ -385,7 +388,7 @@ mod tests {
 
     #[test]
     fn test_parse_verdict_tool_use() {
-        let client = AnthropicClient::new("test-key".to_string());
+        let client = AnthropicClient::new("test-key".to_string()).unwrap();
 
         let input = serde_json::json!({
             "verdict": "pass",

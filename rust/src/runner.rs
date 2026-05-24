@@ -27,7 +27,10 @@ pub struct CheckInfra {
 
 impl CheckInfra {
     pub fn new(api_key: String, no_cache: bool, repo_root: &std::path::Path) -> Result<Self> {
-        let llm = Arc::new(AnthropicClient::new(api_key));
+        let llm = Arc::new(
+            AnthropicClient::new(api_key)
+                .map_err(|e| anyhow::anyhow!("failed to create Anthropic client: {}", e))?,
+        );
         let cache: Arc<dyn Cache> = if no_cache {
             Arc::new(NullCache)
         } else {
