@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 
+use async_trait::async_trait;
+
+use crate::evaluator::{StatelessEvalOpts, StatelessEvaluator};
 use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
 use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
 
@@ -77,8 +80,38 @@ impl AnthropicClient {
     }
 
     /// Evaluate a file against a single rule, returning one verdict
+    ///
+    /// Backward-compatible wrapper; prefer using `StatelessEvaluator` for new code.
     #[allow(clippy::too_many_arguments)]
     pub async fn evaluate(
+        &self,
+        file_path: &str,
+        diff: &str,
+        content: Option<&str>,
+        rule: &Rule,
+        is_new_file: bool,
+        model: &str,
+        max_diff_chars: usize,
+        max_content_chars: usize,
+        timeout: Duration,
+    ) -> Result<RuleVerdict, LlmError> {
+        self.evaluate_internal(
+            file_path,
+            diff,
+            content,
+            rule,
+            is_new_file,
+            model,
+            max_diff_chars,
+            max_content_chars,
+            timeout,
+        )
+        .await
+    }
+
+    /// Evaluate a file against a single rule, returning one verdict
+    #[allow(clippy::too_many_arguments)]
+    async fn evaluate_internal(
         &self,
         file_path: &str,
         diff: &str,
@@ -301,6 +334,32 @@ impl AnthropicClient {
             from_agentic: false,
             context_hint: None,
         })
+    }
+}
+
+#[async_trait]
+impl StatelessEvaluator for AnthropicClient {
+    async fn evaluate(
+        &self,
+        file_path: &str,
+        diff: &str,
+        content: Option<&str>,
+        rule: &Rule,
+        is_new_file: bool,
+        opts: &StatelessEvalOpts,
+    ) -> Result<RuleVerdict, LlmError> {
+        self.evaluate_internal(
+            file_path,
+            diff,
+            content,
+            rule,
+            is_new_file,
+            &opts.model,
+            opts.max_diff_chars,
+            opts.max_content_chars,
+            opts.timeout,
+        )
+        .await
     }
 }
 
