@@ -9,10 +9,7 @@
   },
   "files": [
     "dist/",
-    "docs/",
-    "examples/",
-    "README.md",
-    "LICENSE"
+    "README.md"
   ],
   "scripts": {
     "build": "tsc",
