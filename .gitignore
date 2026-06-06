@@ -3,7 +3,7 @@ dist/
 *.js.map
 .agent-rules-cache/
 *.db
-typescript/test-repo/.git/
+test-repo/.git/
 logs/
 plans/
 .venv/

@@ -21,7 +21,7 @@ import type { FileCheckRequest } from "../../src/schema.js";
 import { getChangedFiles } from "../../src/git.js";
 
 const apiKey = process.env["ANTHROPIC_API_KEY"] ?? "";
-const TEST_REPO = resolve(new URL(".", import.meta.url).pathname, "../../test-repo");
+const TEST_REPO = resolve(new URL(".", import.meta.url).pathname, "../../../test-repo");
 
 const runIf = (cond: boolean) => cond ? it : it.skip;
 const hasKey = Boolean(apiKey);
