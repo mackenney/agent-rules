@@ -224,7 +224,7 @@ impl OpenRouterClient {
                     .map_err(|e| LlmError::Parse(e.to_string()))?;
                 Ok(body)
             }
-            401 | 403 => {
+            401..=403 => {
                 let text = response.text().await.unwrap_or_default();
                 Err(LlmError::Auth(text))
             }
@@ -418,13 +418,13 @@ impl OpenRouterClient {
         let response = match self.call_with_retry(&request, timeout).await {
             Ok(r) => r,
             Err(LlmError::Auth(msg)) => return Err(LlmError::Auth(msg)),
-            Err(_) => {
+            Err(LlmError::Exhausted) => {
                 return Ok(RuleVerdict {
                     rule_id: rule.id.clone(),
                     rule_name: rule.name.clone(),
                     verdict: Verdict::Fail,
                     confidence: 0.0,
-                    reasoning: "LLM call failed".to_string(),
+                    reasoning: "LLM call failed after retries".to_string(),
                     severity: rule.severity,
                     line_refs: vec![],
                     line: None,
@@ -433,6 +433,7 @@ impl OpenRouterClient {
                     context_hint: None,
                 });
             }
+            Err(e) => return Err(e),
         };
 
         self.parse_verdict(&response, rule)
