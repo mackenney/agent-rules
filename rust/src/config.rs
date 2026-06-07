@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 /// Default model for stateless evaluation
 pub const DEFAULT_MODEL: &str = "claude-haiku-4-5";
 
+/// Default model for OpenRouter stateless evaluation
+#[allow(dead_code)]
+pub const DEFAULT_OPENROUTER_MODEL: &str = "anthropic/claude-3-5-haiku-20241022";
 /// Default timeout in milliseconds
 pub const DEFAULT_TIMEOUT_MS: u64 = 60_000;
 
@@ -34,6 +37,24 @@ pub const DEFAULT_MAX_CONTENT_CHARS: usize = 20_000;
 /// Cache version (bump to invalidate all caches)
 pub const CACHE_VERSION: u32 = 2;
 
+/// LLM provider selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum Provider {
+    Anthropic,
+    OpenRouter,
+}
+
+impl Provider {
+    #[allow(dead_code)]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Provider::Anthropic => "anthropic",
+            Provider::OpenRouter => "openrouter",
+        }
+    }
+}
+
 /// Configuration for a check run
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // agentic_* and trace fields reserved for future implementation
@@ -58,6 +79,8 @@ pub struct CheckConfig {
     pub no_cache: bool,
     /// Model for stateless evaluation
     pub model: String,
+    /// LLM provider
+    pub provider: Provider,
     /// Max concurrent stateless LLM calls
     pub max_concurrent: usize,
     /// Max concurrent agentic escalations (separate semaphore from stateless)
@@ -99,6 +122,7 @@ impl Default for CheckConfig {
             warn_as_error: false,
             no_cache: false,
             model: DEFAULT_MODEL.to_string(),
+            provider: Provider::Anthropic,
             max_concurrent: DEFAULT_MAX_CONCURRENT,
             max_agentic_concurrent: DEFAULT_MAX_AGENTIC_CONCURRENT,
             agentic_model: DEFAULT_AGENTIC_MODEL.to_string(),
@@ -143,9 +167,12 @@ pub fn get_cache_dir(repo_root: &Path) -> PathBuf {
     repo_root.join(".agent-rules-cache")
 }
 
-/// Get API key from environment
-pub fn get_api_key() -> Option<String> {
-    std::env::var("ANTHROPIC_API_KEY").ok()
+/// Get API key from environment for the given provider
+pub fn get_api_key(provider: Provider) -> Option<String> {
+    match provider {
+        Provider::Anthropic => std::env::var("ANTHROPIC_API_KEY").ok(),
+        Provider::OpenRouter => std::env::var("OPENROUTER_API_KEY").ok(),
+    }
 }
 
 #[cfg(test)]
@@ -169,5 +196,41 @@ mod tests {
             OutputFormat::Github
         );
         assert!("unknown".parse::<OutputFormat>().is_err());
+    }
+    #[test]
+    fn test_get_api_key_reads_correct_env_var() {
+        let saved_anthropic = std::env::var("ANTHROPIC_API_KEY").ok();
+        let saved_openrouter = std::env::var("OPENROUTER_API_KEY").ok();
+
+        unsafe {
+            std::env::set_var("ANTHROPIC_API_KEY", "test-anthropic-key");
+            std::env::set_var("OPENROUTER_API_KEY", "test-openrouter-key");
+        }
+
+        assert_eq!(
+            get_api_key(Provider::Anthropic),
+            Some("test-anthropic-key".to_string())
+        );
+        assert_eq!(
+            get_api_key(Provider::OpenRouter),
+            Some("test-openrouter-key".to_string())
+        );
+
+        unsafe {
+            match saved_anthropic {
+                Some(v) => std::env::set_var("ANTHROPIC_API_KEY", v),
+                None => std::env::remove_var("ANTHROPIC_API_KEY"),
+            }
+            match saved_openrouter {
+                Some(v) => std::env::set_var("OPENROUTER_API_KEY", v),
+                None => std::env::remove_var("OPENROUTER_API_KEY"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_default_config_has_anthropic_provider() {
+        let config = CheckConfig::default();
+        assert_eq!(config.provider, Provider::Anthropic);
     }
 }

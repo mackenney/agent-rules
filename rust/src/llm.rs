@@ -9,13 +9,13 @@ use thiserror::Error;
 use async_trait::async_trait;
 
 use crate::evaluator::{StatelessEvalOpts, StatelessEvaluator};
-use crate::prompt::{build_tool_schema, build_user_prompt, SYSTEM_PROMPT};
+use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
 use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
-const MAX_RETRIES: u32 = 3;
-const RETRY_BASE_DELAY_MS: u64 = 1000;
+pub(crate) const MAX_RETRIES: u32 = 3;
+pub(crate) const RETRY_BASE_DELAY_MS: u64 = 1000;
 
 /// LLM-specific errors with retry classification
 #[derive(Debug, Error)]

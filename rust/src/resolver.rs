@@ -8,7 +8,7 @@ use anyhow::Result;
 use globset::{GlobSet, GlobSetBuilder};
 use std::path::{Path, PathBuf};
 
-use crate::parser::{parse_rule_file, RULE_FILE_NAME};
+use crate::parser::{RULE_FILE_NAME, parse_rule_file};
 use crate::schema::{InheritMode, Rule, RuleFile};
 
 /// Resolve all rules that apply to a given file

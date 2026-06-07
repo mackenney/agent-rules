@@ -16,7 +16,7 @@ mod resolver;
 mod runner;
 mod schema;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
@@ -24,13 +24,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::cache::{Cache, CacheManager};
-use crate::config::{get_api_key, CheckConfig, OutputFormat};
+use crate::config::{CheckConfig, OutputFormat, Provider, get_api_key};
 use crate::git::get_repo_root;
-use crate::parser::{parse_rule_file, validate_rule, RULE_FILE_NAME};
-use crate::progress::{create_progress_reporter, NullProgress};
-use crate::reporter::{exit_code_for_report, print_report, Stylesheet};
+use crate::parser::{RULE_FILE_NAME, parse_rule_file, validate_rule};
+use crate::progress::{NullProgress, create_progress_reporter};
+use crate::reporter::{Stylesheet, exit_code_for_report, print_report};
 use crate::resolver::{find_all_rule_files, resolve_rules_for_file};
-use crate::runner::{check_pr, CheckInfra};
+use crate::runner::{CheckInfra, check_pr};
 use crate::schema::Severity;
 
 use crate::agentic::PiAgenticEvaluator;
@@ -252,7 +252,7 @@ async fn main() {
 }
 
 async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
-    let api_key = get_api_key().context(
+    let api_key = get_api_key(Provider::Anthropic).context(
         "ANTHROPIC_API_KEY not set. Set the environment variable:\n  export ANTHROPIC_API_KEY=sk-ant-...",
     )?;
 
@@ -277,6 +277,7 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         warn_as_error: args.warn_as_error,
         no_cache: args.no_cache,
         model: args.model,
+        provider: Provider::Anthropic,
         max_concurrent: args.max_concurrent,
         max_agentic_concurrent: args.agentic_concurrency,
         agentic_model: args.agentic_model,
