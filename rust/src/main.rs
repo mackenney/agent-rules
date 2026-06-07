@@ -114,8 +114,8 @@ struct CheckArgs {
     no_cache: bool,
 
     /// Model for stateless evaluation
-    #[arg(long, default_value = config::DEFAULT_MODEL)]
-    model: String,
+    #[arg(long)]
+    model: Option<String>,
 
     /// LLM provider: anthropic, openrouter
     #[arg(long, default_value = "anthropic")]
@@ -274,11 +274,10 @@ async fn main() {
 async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
     let provider: Provider = args.provider.into();
 
-    let model = if args.model == config::DEFAULT_MODEL && provider == Provider::OpenRouter {
-        config::DEFAULT_OPENROUTER_MODEL.to_string()
-    } else {
-        args.model.clone()
-    };
+    let model = args.model.unwrap_or_else(|| match provider {
+        Provider::Anthropic => config::DEFAULT_MODEL.to_string(),
+        Provider::OpenRouter => config::DEFAULT_OPENROUTER_MODEL.to_string(),
+    });
 
     let repo_root = match args.repo {
         Some(r) => r,

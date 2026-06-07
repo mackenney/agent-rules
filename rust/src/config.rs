@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_MODEL: &str = "claude-haiku-4-5";
 
 /// Default model for OpenRouter stateless evaluation
-#[allow(dead_code)]
 pub const DEFAULT_OPENROUTER_MODEL: &str = "anthropic/claude-3-5-haiku-20241022";
 /// Default timeout in milliseconds
 pub const DEFAULT_TIMEOUT_MS: u64 = 60_000;
@@ -35,18 +34,16 @@ pub const DEFAULT_MAX_DIFF_CHARS: usize = 8_000;
 pub const DEFAULT_MAX_CONTENT_CHARS: usize = 20_000;
 
 /// Cache version (bump to invalidate all caches)
-pub const CACHE_VERSION: u32 = 2;
+pub const CACHE_VERSION: u32 = 3;
 
 /// LLM provider selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum Provider {
     Anthropic,
     OpenRouter,
 }
 
 impl Provider {
-    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Provider::Anthropic => "anthropic",

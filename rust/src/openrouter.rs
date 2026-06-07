@@ -3,7 +3,6 @@
 //! Implements StatelessEvaluator using the same retry/verdict pattern as AnthropicClient,
 //! adapted for the OpenAI-compatible message format and function-call tool schema.
 
-#![allow(dead_code)]
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -78,7 +77,6 @@ struct ToolCall {
 
 #[derive(Debug, Deserialize)]
 struct FunctionCall {
-    #[allow(dead_code)]
     name: String,
     arguments: FunctionArguments,
 }
@@ -115,6 +113,7 @@ impl FunctionArguments {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Usage {
     #[allow(dead_code)]
@@ -125,6 +124,7 @@ struct Usage {
     prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct PromptTokensDetails {
     #[allow(dead_code)]
@@ -156,6 +156,7 @@ impl OpenRouterClient {
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     fn with_base_url(api_key: String, base_url: String) -> Result<Self, LlmError> {
         let mut client = Self::new(api_key)?;
         client.base_url = base_url;
@@ -290,6 +291,24 @@ impl OpenRouterClient {
             });
         };
 
+        if tool_call.function.name != "submit_verdict" {
+            return Ok(RuleVerdict {
+                rule_id: rule.id.clone(),
+                rule_name: rule.name.clone(),
+                verdict: Verdict::Fail,
+                confidence: 0.0,
+                reasoning: format!(
+                    "Unexpected tool call '{}'; expected 'submit_verdict'",
+                    tool_call.function.name
+                ),
+                severity: rule.severity,
+                line_refs: vec![],
+                line: None,
+                cached: false,
+                from_agentic: false,
+                context_hint: None,
+            });
+        }
         let input = tool_call.function.arguments.to_value()?;
 
         let verdict_str = input
