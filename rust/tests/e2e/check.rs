@@ -3,6 +3,7 @@
 //! Each test requires ANTHROPIC_API_KEY and skips gracefully when absent.
 //! Tests mirror the TypeScript integration suite (stateless.test.ts).
 
+use predicates::prelude::*;
 use serde_json::Value;
 
 use crate::common::{cmd, require_env, test_repo};
@@ -200,4 +201,46 @@ fn second_run_hits_cache() {
         all_cached,
         "all files must be cached on second run;\nreport: {report}"
     );
+}
+
+/// OpenRouter: bad controller should fail (exit 1 or 2) — requires OPENROUTER_API_KEY.
+#[test]
+fn openrouter_bad_controller_exits_1() {
+    let Some(_key) = require_env("OPENROUTER_API_KEY") else {
+        return;
+    };
+
+    cmd()
+        .args([
+            "check",
+            "--provider",
+            "openrouter",
+            "--files",
+            "src/api/bad_controller.py",
+            "--repo",
+        ])
+        .arg(test_repo())
+        .assert()
+        .code(predicates::ord::in_iter([1, 2]));
+}
+
+/// OpenRouter: clean controller should pass (exit 0) — requires OPENROUTER_API_KEY.
+#[test]
+fn openrouter_clean_controller_exits_0() {
+    let Some(_key) = require_env("OPENROUTER_API_KEY") else {
+        return;
+    };
+
+    cmd()
+        .args([
+            "check",
+            "--provider",
+            "openrouter",
+            "--files",
+            "src/api/clean_controller.py",
+            "--repo",
+        ])
+        .arg(test_repo())
+        .assert()
+        .code(0);
 }
