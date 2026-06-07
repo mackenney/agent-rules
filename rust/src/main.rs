@@ -8,6 +8,7 @@ mod config;
 mod evaluator;
 mod git;
 mod llm;
+mod openrouter;
 mod parser;
 mod progress;
 mod prompt;
