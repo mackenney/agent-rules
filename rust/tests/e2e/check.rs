@@ -206,7 +206,7 @@ fn second_run_hits_cache() {
 /// OpenRouter: bad controller should fail (exit 1 or 2) — requires OPENROUTER_API_KEY.
 #[test]
 fn openrouter_bad_controller_exits_2() {
-    let Some(_key) = require_env("OPENROUTER_API_KEY") else {
+    let Some(key) = require_env("OPENROUTER_API_KEY") else {
         return;
     };
 
@@ -220,6 +220,7 @@ fn openrouter_bad_controller_exits_2() {
             "--repo",
         ])
         .arg(test_repo())
+        .env("OPENROUTER_API_KEY", &key)
         .assert()
         .code(2);
 }
@@ -227,7 +228,7 @@ fn openrouter_bad_controller_exits_2() {
 /// OpenRouter: clean controller should pass (exit 0) — requires OPENROUTER_API_KEY.
 #[test]
 fn openrouter_clean_controller_exits_0() {
-    let Some(_key) = require_env("OPENROUTER_API_KEY") else {
+    let Some(key) = require_env("OPENROUTER_API_KEY") else {
         return;
     };
 
@@ -241,6 +242,7 @@ fn openrouter_clean_controller_exits_0() {
             "--repo",
         ])
         .arg(test_repo())
+        .env("OPENROUTER_API_KEY", &key)
         .assert()
         .code(0);
 }

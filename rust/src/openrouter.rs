@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use crate::evaluator::{StatelessEvalOpts, StatelessEvaluator};
@@ -13,6 +14,7 @@ use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
 use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://openrouter.ai/api/v1";
+static OPENAI_TOOL_SCHEMA: OnceLock<serde_json::Value> = OnceLock::new();
 
 #[derive(Debug, Serialize)]
 struct ChatCompletionRequest<'a> {
@@ -116,20 +118,15 @@ impl FunctionArguments {
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Usage {
-    #[allow(dead_code)]
     prompt_tokens: Option<u32>,
-    #[allow(dead_code)]
     completion_tokens: Option<u32>,
-    #[allow(dead_code)]
     prompt_tokens_details: Option<PromptTokensDetails>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct PromptTokensDetails {
-    #[allow(dead_code)]
     cached_tokens: Option<u32>,
-    #[allow(dead_code)]
     cache_write_tokens: Option<u32>,
 }
 
@@ -155,14 +152,6 @@ impl OpenRouterClient {
         })
     }
 
-    #[cfg(test)]
-    #[allow(dead_code)]
-    fn with_base_url(api_key: String, base_url: String) -> Result<Self, LlmError> {
-        let mut client = Self::new(api_key)?;
-        client.base_url = base_url;
-        Ok(client)
-    }
-
     fn transform_tool_schema(anthropic_schema: serde_json::Value) -> serde_json::Value {
         serde_json::json!({
             "type": "function",
@@ -172,6 +161,12 @@ impl OpenRouterClient {
                 "parameters": anthropic_schema["input_schema"],
             }
         })
+    }
+
+    fn openai_tool_schema() -> serde_json::Value {
+        OPENAI_TOOL_SCHEMA
+            .get_or_init(|| Self::transform_tool_schema(build_tool_schema()))
+            .clone()
     }
 
     fn build_messages(&self, model: &str, user_prompt: &str) -> Vec<ChatMessage> {
@@ -349,11 +344,11 @@ impl OpenRouterClient {
             .and_then(|v| v.as_array())
             .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
             .unwrap_or_default();
-        let line = line_refs.first().copied().map(|l| l as u32);
         let line_refs_u32: Vec<u32> = line_refs
             .iter()
             .filter_map(|&l| u32::try_from(l).ok())
             .collect();
+        let line = line_refs_u32.first().copied();
 
         let context_hint = input
             .get("context_hint")
@@ -406,7 +401,7 @@ impl OpenRouterClient {
         let user_prompt = build_user_prompt(file_path, diff, content, rule, is_new_file);
 
         let messages = self.build_messages(model, &user_prompt);
-        let tool = Self::transform_tool_schema(build_tool_schema());
+        let tool = Self::openai_tool_schema();
 
         let request = ChatCompletionRequest {
             model,
@@ -802,5 +797,38 @@ mod tests {
 
         let value = fc.arguments.to_value().unwrap();
         assert_eq!(value["verdict"], "pass");
+    }
+    #[test]
+    fn test_parse_verdict_wrong_function_name() {
+        let client = OpenRouterClient::new("test-key".to_string()).unwrap();
+        let rule = make_test_rule();
+
+        let response = ChatCompletionResponse {
+            choices: vec![Choice {
+                message: ResponseMessage {
+                    tool_calls: Some(vec![ToolCall {
+                        function: FunctionCall {
+                            name: "some_other_function".to_string(),
+                            arguments: FunctionArguments::String("{}".to_string()),
+                        },
+                    }]),
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: None,
+        };
+
+        let verdict = client.parse_verdict(&response, &rule).unwrap();
+        assert_eq!(verdict.verdict, Verdict::Fail);
+        assert!(
+            verdict.reasoning.contains("Unexpected tool call"),
+            "reasoning should identify unexpected name: {}",
+            verdict.reasoning
+        );
+        assert!(
+            verdict.reasoning.contains("some_other_function"),
+            "reasoning should include the actual function name: {}",
+            verdict.reasoning
+        );
     }
 }
