@@ -164,7 +164,7 @@ Check whether these e2e tests need to be gated behind a feature flag (existing e
 
 ### Task 5: Verify predicates dependency
 
-Check `rust/Cargo.toml` for `predicates` in dev-dependencies. If it's not there but `assert_cmd` is, `predicates` might be available transitively. Test compilation. If needed, add `predicates = "3"` to `[dev-dependencies]` in `Cargo.toml`.
+Add `predicates = "3"` to `[dev-dependencies]` in `rust/Cargo.toml`. The crate is available transitively through `assert_cmd` but must be declared explicitly for direct use in test files.
 
 ## Acceptance Criteria
 
