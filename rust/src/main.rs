@@ -116,6 +116,10 @@ struct CheckArgs {
     #[arg(long, default_value = config::DEFAULT_MODEL)]
     model: String,
 
+    /// LLM provider: anthropic, openrouter
+    #[arg(long, default_value = "anthropic")]
+    provider: ProviderArg,
+
     /// Max concurrent stateless LLM calls
     #[arg(long, default_value = "10")]
     max_concurrent: usize,
@@ -186,6 +190,20 @@ impl From<OutputFormatArg> for OutputFormat {
     }
 }
 
+#[derive(Clone, Copy, ValueEnum)]
+enum ProviderArg {
+    Anthropic,
+    Openrouter,
+}
+
+impl From<ProviderArg> for Provider {
+    fn from(arg: ProviderArg) -> Self {
+        match arg {
+            ProviderArg::Anthropic => Provider::Anthropic,
+            ProviderArg::Openrouter => Provider::OpenRouter,
+        }
+    }
+}
 #[derive(Subcommand)]
 enum CacheCommands {
     /// Show cache statistics
@@ -278,7 +296,7 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         warn_as_error: args.warn_as_error,
         no_cache: args.no_cache,
         model: args.model,
-        provider: Provider::Anthropic,
+        provider: args.provider.into(),
         max_concurrent: args.max_concurrent,
         max_agentic_concurrent: args.agentic_concurrency,
         agentic_model: args.agentic_model,
@@ -293,6 +311,14 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         strict_rules: args.strict_rules,
         allow_bash: args.allow_bash,
     };
+
+    if config.provider == Provider::Anthropic && config.model.contains('/') {
+        bail!(
+            "Model '{}' looks like an OpenRouter model (contains '/'). \
+             Did you mean --provider openrouter?",
+            config.model
+        );
+    }
 
     if config.post_comment {
         if config.pr_url.is_none() {
