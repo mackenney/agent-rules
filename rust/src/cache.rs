@@ -52,6 +52,7 @@ pub trait Cache: Send + Sync {
         diff: &str,
         rules: &[Rule],
         model: &str,
+        provider: &str,
     ) -> String;
     fn stats(&self) -> Result<CacheStats>;
     fn clear(&self) -> Result<usize>;
@@ -66,10 +67,12 @@ fn compute_cache_key(
     diff: &str,
     rules: &[Rule],
     model: &str,
+    provider: &str,
 ) -> String {
     let mut hasher = Sha256::new();
     hasher.update(format!("version:{}\n", CACHE_VERSION));
     hasher.update(format!("model:{}\n", model));
+    hasher.update(format!("provider:{}\n", provider));
 
     let mut sorted_rules: Vec<&Rule> = rules.iter().collect();
     sorted_rules.sort_by(|a, b| a.id.cmp(&b.id));
@@ -234,8 +237,9 @@ impl Cache for CacheManager {
         diff: &str,
         rules: &[Rule],
         model: &str,
+        provider: &str,
     ) -> String {
-        compute_cache_key(file_path, content, diff, rules, model)
+        compute_cache_key(file_path, content, diff, rules, model, provider)
     }
 }
 
@@ -273,8 +277,9 @@ impl Cache for NullCache {
         diff: &str,
         rules: &[Rule],
         model: &str,
+        provider: &str,
     ) -> String {
-        compute_cache_key(file_path, content, diff, rules, model)
+        compute_cache_key(file_path, content, diff, rules, model, provider)
     }
 }
 
@@ -330,8 +335,22 @@ mod tests {
 
         let rules = vec![make_test_rule("rule-1")];
 
-        let key1 = cache.key_for("test.rs", Some("content"), "diff", &rules, "claude");
-        let key2 = cache.key_for("test.rs", Some("content"), "diff", &rules, "claude");
+        let key1 = cache.key_for(
+            "test.rs",
+            Some("content"),
+            "diff",
+            &rules,
+            "claude",
+            "anthropic",
+        );
+        let key2 = cache.key_for(
+            "test.rs",
+            Some("content"),
+            "diff",
+            &rules,
+            "claude",
+            "anthropic",
+        );
 
         assert_eq!(key1, key2);
     }
@@ -344,8 +363,8 @@ mod tests {
         let rules1 = vec![make_test_rule("a"), make_test_rule("b")];
         let rules2 = vec![make_test_rule("b"), make_test_rule("a")];
 
-        let key1 = cache.key_for("test.rs", Some("c"), "d", &rules1, "model");
-        let key2 = cache.key_for("test.rs", Some("c"), "d", &rules2, "model");
+        let key1 = cache.key_for("test.rs", Some("c"), "d", &rules1, "model", "anthropic");
+        let key2 = cache.key_for("test.rs", Some("c"), "d", &rules2, "model", "anthropic");
 
         assert_eq!(key1, key2, "keys should be independent of rule order");
     }

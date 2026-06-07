@@ -37,6 +37,7 @@ use crate::schema::Severity;
 use crate::agentic::PiAgenticEvaluator;
 use crate::evaluator::{AgenticEvaluator, StatelessEvaluator};
 use crate::llm::AnthropicClient;
+use crate::openrouter::OpenRouterClient;
 
 /// Check PR diffs against LLM-powered rules
 #[derive(Parser)]
@@ -271,9 +272,13 @@ async fn main() {
 }
 
 async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
-    let api_key = get_api_key(Provider::Anthropic).context(
-        "ANTHROPIC_API_KEY not set. Set the environment variable:\n  export ANTHROPIC_API_KEY=sk-ant-...",
-    )?;
+    let provider: Provider = args.provider.into();
+
+    let model = if args.model == config::DEFAULT_MODEL && provider == Provider::OpenRouter {
+        config::DEFAULT_OPENROUTER_MODEL.to_string()
+    } else {
+        args.model.clone()
+    };
 
     let repo_root = match args.repo {
         Some(r) => r,
@@ -295,8 +300,8 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         output_format: args.output.into(),
         warn_as_error: args.warn_as_error,
         no_cache: args.no_cache,
-        model: args.model,
-        provider: args.provider.into(),
+        model,
+        provider,
         max_concurrent: args.max_concurrent,
         max_agentic_concurrent: args.agentic_concurrency,
         agentic_model: args.agentic_model,
@@ -334,17 +339,48 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         eprintln!("Note: --strict-rules is not yet implemented; ignoring");
     }
 
-    let stateless: Arc<dyn StatelessEvaluator> = Arc::new(
-        AnthropicClient::new(api_key.clone())
-            .map_err(|e| anyhow::anyhow!("failed to create Anthropic client: {}", e))?,
-    );
-    let agentic: Option<Arc<dyn AgenticEvaluator>> = match PiAgenticEvaluator::new(api_key) {
-        Ok(e) => Some(Arc::new(e)),
-        Err(e) => {
-            eprintln!("Warning: agentic evaluator unavailable: {}", e);
+    let api_key = get_api_key(provider).context(match provider {
+        Provider::Anthropic => {
+            "ANTHROPIC_API_KEY not set. Set the environment variable:\n  \
+             export ANTHROPIC_API_KEY=sk-ant-..."
+        }
+        Provider::OpenRouter => {
+            "OPENROUTER_API_KEY not set. Set the environment variable:\n  \
+             export OPENROUTER_API_KEY=sk-or-..."
+        }
+    })?;
+
+    let stateless: Arc<dyn StatelessEvaluator> = match provider {
+        Provider::Anthropic => Arc::new(
+            AnthropicClient::new(api_key.clone())
+                .map_err(|e| anyhow::anyhow!("failed to create Anthropic client: {}", e))?,
+        ),
+        Provider::OpenRouter => Arc::new(
+            OpenRouterClient::new(api_key.clone())
+                .map_err(|e| anyhow::anyhow!("failed to create OpenRouter client: {}", e))?,
+        ),
+    };
+
+    let anthropic_key_for_agentic = if provider == Provider::Anthropic {
+        Some(api_key)
+    } else {
+        std::env::var("ANTHROPIC_API_KEY").ok()
+    };
+
+    let agentic: Option<Arc<dyn AgenticEvaluator>> = match anthropic_key_for_agentic {
+        Some(key) => match PiAgenticEvaluator::new(key) {
+            Ok(e) => Some(Arc::new(e)),
+            Err(e) => {
+                eprintln!("Warning: agentic evaluator unavailable: {}", e);
+                None
+            }
+        },
+        None => {
+            eprintln!("Warning: agentic evaluator unavailable (ANTHROPIC_API_KEY not set)");
             None
         }
     };
+
     let infra = CheckInfra::new(stateless, agentic, config.no_cache, &config.repo_root)?;
 
     let infra = if config.output_format == OutputFormat::Json {
