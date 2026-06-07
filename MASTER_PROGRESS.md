@@ -10,7 +10,7 @@ Stable
 
 ## In Progress
 
-*(none)*
+- `openrouter-evaluator` — Add OpenRouter as second LLM provider (Rust): `--provider openrouter`, `OpenRouterClient`, cache key fix; [plan](plans/openrouter-evaluator/PROGRESS.md)
 
 ## Queued
 
