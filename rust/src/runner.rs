@@ -114,7 +114,7 @@ pub async fn check_pr(infra: &CheckInfra, config: &CheckConfig) -> Result<PRRepo
     // The stateless permit is held only during the LLM call; when agentic escalation
     // is added, the stateless permit must be released before acquiring an agentic slot.
     let stateless_sem = Arc::new(Semaphore::new(config.max_concurrent));
-    let _agentic_sem = Arc::new(Semaphore::new(config.max_agentic_concurrent));
+    let agentic_sem = Arc::new(Semaphore::new(config.max_agentic_concurrent));
     let mut tasks: JoinSet<Result<FileVerdict>> = JoinSet::new();
 
     for file_diff in file_diffs {
@@ -126,13 +126,23 @@ pub async fn check_pr(infra: &CheckInfra, config: &CheckConfig) -> Result<PRRepo
         };
         let config = config.clone();
         let sem = stateless_sem.clone();
+        let agentic_sem_task = agentic_sem.clone();
 
         tasks.spawn(async move {
-            let _permit = sem.acquire().await?;
-            check_file(&infra, &config, file_diff).await
-            // _permit dropped here, freeing the stateless slot for the next call.
-            // If agentic escalation is later added, acquire agentic_sem AFTER dropping
-            // this permit so stateless slots aren't blocked during agentic sessions.
+            let permit = sem.acquire_owned().await?;
+            let permit_cell = Arc::new(std::sync::Mutex::new(Some(permit)));
+            let release_stateless: Box<dyn Fn() + Send> = {
+                let cell = permit_cell.clone();
+                Box::new(move || drop(cell.lock().unwrap().take()))
+            };
+            check_file(
+                &infra,
+                &config,
+                file_diff,
+                Some(release_stateless),
+                Some(agentic_sem_task),
+            )
+            .await
         });
     }
 
@@ -166,6 +176,8 @@ pub async fn check_file(
     infra: &CheckInfra,
     config: &CheckConfig,
     file_diff: FileDiff,
+    release_stateless: Option<Box<dyn Fn() + Send>>,
+    agentic_sem: Option<Arc<Semaphore>>,
 ) -> Result<FileVerdict> {
     let file_path = file_diff.path.clone();
 
@@ -281,6 +293,10 @@ pub async fn check_file(
             .await
             .map_err(|e| anyhow::anyhow!("Stateless evaluation failed: {}", e))?;
 
+        if let Some(ref release) = release_stateless {
+            release();
+        }
+
         if verdict.verdict == Verdict::NeedsMoreContext && rule.context == RuleContext::Agentic {
             if let Some(agentic) = &infra.agentic {
                 let hints = verdict
@@ -294,6 +310,12 @@ pub async fn check_file(
                     timeout: Duration::from_millis(config.agentic_timeout_ms),
                     allow_bash: config.allow_bash,
                     trace: config.trace,
+                };
+
+                let _agentic_permit = if let Some(ref sem) = agentic_sem {
+                    Some(sem.acquire().await.context("agentic semaphore closed")?)
+                } else {
+                    None
                 };
 
                 verdict = agentic

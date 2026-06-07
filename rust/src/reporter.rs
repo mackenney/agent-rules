@@ -540,7 +540,7 @@ mod tests {
         let mut out = Vec::new();
         print_report(&report, OutputFormat::Json, false, None, &mut out, &colors).unwrap();
         let json: serde_json::Value = serde_json::from_slice(&out).unwrap();
-        assert_eq!(json["overall_verdict"], "fail");
+        assert_eq!(json["overall_verdict"], "error");
     }
 
     #[test]

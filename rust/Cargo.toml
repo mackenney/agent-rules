@@ -21,5 +21,19 @@ regex = "1"
 async-trait = "0.1"
 which = "6"
 
+[features]
+test-e2e = []
+
+[[test]]
+name = "integration"
+path = "tests/integration/mod.rs"
+
+[[test]]
+name = "e2e"
+path = "tests/e2e/mod.rs"
+required-features = ["test-e2e"]
+
 [dev-dependencies]
+assert_cmd = "2"
+serde_json = "1"
 tempfile = "3"

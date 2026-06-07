@@ -179,6 +179,8 @@ pub enum OverallVerdict {
     #[default]
     Pass,
     Warn,
+    /// Serializes as "error" to match the TypeScript implementation and SPEC.
+    #[serde(rename = "error")]
     Fail,
 }
 

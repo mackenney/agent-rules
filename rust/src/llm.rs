@@ -9,7 +9,7 @@ use thiserror::Error;
 use async_trait::async_trait;
 
 use crate::evaluator::{StatelessEvalOpts, StatelessEvaluator};
-use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
+use crate::prompt::{build_tool_schema, build_user_prompt, SYSTEM_PROMPT};
 use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://api.anthropic.com";
