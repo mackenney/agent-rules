@@ -224,7 +224,7 @@ impl OpenRouterClient {
                     .map_err(|e| LlmError::Parse(e.to_string()))?;
                 Ok(body)
             }
-            401 | 403 => {
+            401..=403 => {
                 let text = response.text().await.unwrap_or_default();
                 Err(LlmError::Auth(text))
             }
@@ -320,7 +320,8 @@ impl OpenRouterClient {
         let confidence = input
             .get("confidence")
             .and_then(|v| v.as_f64())
-            .unwrap_or(0.5);
+            .unwrap_or(0.5)
+            .clamp(0.0, 1.0);
 
         let reasoning = input
             .get("reasoning")
@@ -516,6 +517,7 @@ mod tests {
         assert_eq!(verdict.confidence, 0.9);
         assert_eq!(verdict.rule_id, "test-rule");
         assert!(verdict.line_refs.is_empty());
+        assert_eq!(verdict.line, None);
     }
 
     #[test]
@@ -797,6 +799,21 @@ mod tests {
 
         let value = fc.arguments.to_value().unwrap();
         assert_eq!(value["verdict"], "pass");
+    }
+
+    #[test]
+    fn test_function_arguments_deserialize_invalid_type() {
+        let json_array = r#"{"name":"submit_verdict","arguments":[1,2,3]}"#;
+        let result: Result<FunctionCall, _> = serde_json::from_str(json_array);
+        assert!(result.is_err(), "array arguments must be rejected");
+
+        let json_null = r#"{"name":"submit_verdict","arguments":null}"#;
+        let result: Result<FunctionCall, _> = serde_json::from_str(json_null);
+        assert!(result.is_err(), "null arguments must be rejected");
+
+        let json_number = r#"{"name":"submit_verdict","arguments":42}"#;
+        let result: Result<FunctionCall, _> = serde_json::from_str(json_number);
+        assert!(result.is_err(), "numeric arguments must be rejected");
     }
     #[test]
     fn test_parse_verdict_wrong_function_name() {

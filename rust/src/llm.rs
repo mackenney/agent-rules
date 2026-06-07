@@ -278,11 +278,11 @@ impl AnthropicClient {
                         .and_then(|v| v.as_array())
                         .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
                         .unwrap_or_default();
-                    let line = line_refs.first().copied().map(|l| l as u32);
                     let line_refs_u32: Vec<u32> = line_refs
                         .iter()
                         .filter_map(|&l| u32::try_from(l).ok())
                         .collect();
+                    let line = line_refs_u32.first().copied();
 
                     let context_hint =
                         input
