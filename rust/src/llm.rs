@@ -253,7 +253,8 @@ impl AnthropicClient {
                     let confidence = input
                         .get("confidence")
                         .and_then(|v| v.as_f64())
-                        .unwrap_or(0.5);
+                        .unwrap_or(0.5)
+                        .clamp(0.0, 1.0);
 
                     let reasoning = input
                         .get("reasoning")

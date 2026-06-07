@@ -224,7 +224,7 @@ impl OpenRouterClient {
                     .map_err(|e| LlmError::Parse(e.to_string()))?;
                 Ok(body)
             }
-            401..=403 => {
+            401 | 403 => {
                 let text = response.text().await.unwrap_or_default();
                 Err(LlmError::Auth(text))
             }
@@ -639,6 +639,9 @@ mod tests {
             verdict.reasoning
         );
         assert!(verdict.context_hint.is_some());
+        let hint = verdict.context_hint.as_ref().unwrap();
+        assert_eq!(hint.read_files, vec!["src/utils.rs"]);
+        assert_eq!(hint.question, "What does utils export?");
     }
 
     #[test]
@@ -846,6 +849,51 @@ mod tests {
             verdict.reasoning.contains("some_other_function"),
             "reasoning should include the actual function name: {}",
             verdict.reasoning
+        );
+    }
+
+    #[test]
+    fn test_parse_verdict_empty_tool_calls_array() {
+        let client = OpenRouterClient::new("test-key".to_string()).unwrap();
+        let rule = make_test_rule();
+
+        let response = ChatCompletionResponse {
+            choices: vec![Choice {
+                message: ResponseMessage {
+                    tool_calls: Some(vec![]),
+                },
+                finish_reason: Some("stop".to_string()),
+            }],
+            usage: None,
+        };
+
+        let verdict = client.parse_verdict(&response, &rule).unwrap();
+        assert_eq!(verdict.verdict, Verdict::Fail);
+        assert!(
+            verdict.reasoning.contains("No verdict"),
+            "empty tool_calls array should fall back to 'No verdict': {}",
+            verdict.reasoning
+        );
+    }
+
+    #[test]
+    fn test_parse_verdict_confidence_clamped() {
+        let client = OpenRouterClient::new("test-key".to_string()).unwrap();
+        let rule = make_test_rule();
+
+        let r = make_response_with_arguments(FunctionArguments::String(
+            r#"{"verdict":"pass","confidence":1.5,"reasoning":"ok","line_refs":[]}"#.to_string(),
+        ));
+        let v = client.parse_verdict(&r, &rule).unwrap();
+        assert_eq!(v.confidence, 1.0, "confidence > 1.0 must be clamped to 1.0");
+
+        let r2 = make_response_with_arguments(FunctionArguments::String(
+            r#"{"verdict":"fail","confidence":-0.5,"reasoning":"bad","line_refs":[]}"#.to_string(),
+        ));
+        let v2 = client.parse_verdict(&r2, &rule).unwrap();
+        assert_eq!(
+            v2.confidence, 0.0,
+            "confidence < 0.0 must be clamped to 0.0"
         );
     }
 }

@@ -257,7 +257,6 @@ pub async fn check_file(
             &file_diff.diff,
             std::slice::from_ref(rule),
             &config.model,
-            config.provider.as_str(),
         );
 
         if let Some(cached_fv) = infra.cache.get(&cache_key) {

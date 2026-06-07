@@ -34,7 +34,7 @@ pub const DEFAULT_MAX_DIFF_CHARS: usize = 8_000;
 pub const DEFAULT_MAX_CONTENT_CHARS: usize = 20_000;
 
 /// Cache version (bump to invalidate all caches)
-pub const CACHE_VERSION: u32 = 3;
+pub const CACHE_VERSION: u32 = 2;
 
 /// LLM provider selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +44,7 @@ pub enum Provider {
 }
 
 impl Provider {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             Provider::Anthropic => "anthropic",
