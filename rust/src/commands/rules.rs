@@ -3,7 +3,7 @@
 use anyhow::Result;
 use owo_colors::OwoColorize;
 
-use agent_rules::parser::{RULE_FILE_NAME, parse_rule_file, validate_rule};
+use agent_rules::parser::{parse_rule_file, validate_rule, RULE_FILE_NAME};
 use agent_rules::reporter::Stylesheet;
 use agent_rules::resolver::{find_all_rule_files, resolve_rules_for_file};
 use agent_rules::schema::Severity;

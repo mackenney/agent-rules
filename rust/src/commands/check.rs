@@ -2,16 +2,16 @@
 
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
-use agent_rules::config::{CheckConfig, OutputFormat, Provider, get_api_key};
+use agent_rules::config::{get_api_key, CheckConfig, OutputFormat, Provider};
 use agent_rules::evaluator::{
     AgenticEvaluator, AnthropicClient, OpenRouterClient, PiAgenticEvaluator, StatelessEvaluator,
 };
 use agent_rules::git::get_repo_root;
-use agent_rules::progress::{NullProgress, create_progress_reporter};
-use agent_rules::reporter::{Stylesheet, exit_code_for_report, print_report};
-use agent_rules::runner::{CheckInfra, check_pr};
+use agent_rules::progress::{create_progress_reporter, NullProgress};
+use agent_rules::reporter::{exit_code_for_report, print_report, Stylesheet};
+use agent_rules::runner::{check_pr, CheckInfra};
 
 use crate::CheckArgs;
 
