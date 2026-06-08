@@ -263,6 +263,12 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         Provider::OpenRouter => agent_rules::config::DEFAULT_OPENROUTER_MODEL.to_string(),
     });
 
+    let agentic_model = if provider == Provider::OpenRouter && !args.agentic_model.contains('/') {
+        format!("anthropic/{}", args.agentic_model)
+    } else {
+        args.agentic_model.clone()
+    };
+
     let repo_root = match args.repo {
         Some(r) => r,
         None => get_repo_root(&std::env::current_dir()?)?,
@@ -287,7 +293,7 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         provider,
         max_concurrent: args.max_concurrent,
         max_agentic_concurrent: args.agentic_concurrency,
-        agentic_model: args.agentic_model,
+        agentic_model,
         agentic_timeout_ms: args.agentic_timeout,
         max_file_bytes: args.max_file_bytes,
         max_diff_chars: args.max_diff_chars,
@@ -344,25 +350,14 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
         ),
     };
 
-    let anthropic_key_for_agentic = if provider == Provider::Anthropic {
-        Some(api_key)
-    } else {
-        std::env::var("ANTHROPIC_API_KEY").ok()
-    };
-
-    let agentic: Option<Arc<dyn AgenticEvaluator>> = match anthropic_key_for_agentic {
-        Some(key) => match PiAgenticEvaluator::new(key) {
+    let agentic: Option<Arc<dyn AgenticEvaluator>> =
+        match PiAgenticEvaluator::new(api_key.clone(), provider) {
             Ok(e) => Some(Arc::new(e)),
             Err(e) => {
                 eprintln!("Warning: agentic evaluator unavailable: {}", e);
                 None
             }
-        },
-        None => {
-            eprintln!("Warning: agentic evaluator unavailable (ANTHROPIC_API_KEY not set)");
-            None
-        }
-    };
+        };
 
     let infra = CheckInfra::new(stateless, agentic, config.no_cache, &config.repo_root)?;
 
