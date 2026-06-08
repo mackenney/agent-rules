@@ -8,22 +8,32 @@ use serde::{Deserialize, Serialize};
 /// A single rule definition
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Rule {
+    /// Unique rule identifier (used for override/disable lookups)
     pub id: String,
+    /// Human-readable rule name
     pub name: String,
     #[serde(default)]
+    /// Severity applied when the rule fails
     pub severity: Severity,
     #[serde(default = "default_true")]
+    /// Whether the rule is enabled; disabled rules are skipped
     pub enabled: bool,
     #[serde(default)]
+    /// Evaluation context (stateless or agentic)
     pub context: RuleContext,
+    /// Prompt text sent to the LLM for evaluation
     pub prompt: String,
     #[serde(default = "default_glob_include", alias = "glob-include")]
+    /// Glob patterns for files this rule applies to
     pub glob_include: Vec<String>,
     #[serde(default, alias = "glob-exclude")]
+    /// Glob patterns for files this rule should skip
     pub glob_exclude: Vec<String>,
     #[serde(default)]
+    /// Pass/fail examples for prompt context
     pub examples: Vec<RuleExample>,
     #[serde(default, alias = "needs-more-context-when")]
+    /// Condition under which stateless pass may request more context
     pub needs_more_context_when: String,
 }
 
@@ -39,8 +49,10 @@ fn default_glob_include() -> Vec<String> {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
+    /// Warning-level failure (does not block by default)
     #[default]
     Warn,
+    /// Error-level failure (blocks merge)
     Error,
 }
 
@@ -57,6 +69,7 @@ impl std::fmt::Display for Severity {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum RuleContext {
+    /// Evaluate using a single stateless LLM call
     #[default]
     Stateless,
     /// Parsed but treated as stateless (no agentic evaluator in Rust impl)
@@ -66,19 +79,24 @@ pub enum RuleContext {
 /// Example for a rule (pass/fail demonstration)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RuleExample {
+    /// Source code snippet demonstrating the rule
     pub code: String,
     /// Serde alias supports both "verdict" (TS format) and the older field name
     #[serde(default = "default_example_verdict", alias = "verdict")]
     pub verdict: ExampleVerdict,
     #[serde(default, alias = "description")]
+    /// Human-readable description of why this example passes or fails
     pub description: String,
 }
 
+/// Indicates whether a rule example represents a passing or failing case.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ExampleVerdict {
+    /// The example represents code that passes the rule
     #[default]
     Pass,
+    /// The example represents code that fails the rule
     Fail,
 }
 
@@ -129,7 +147,9 @@ pub enum InheritMode {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum Verdict {
+    /// File passes the rule
     Pass,
+    /// File violates the rule
     Fail,
     /// Collapsed to Fail in Rust impl (no agentic evaluator)
     NeedsMoreContext,
@@ -159,7 +179,9 @@ impl std::fmt::Display for Verdict {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ResolvedVerdict {
+    /// Rule check passed
     Pass,
+    /// Rule check failed (includes collapsed needs-more-context)
     Fail,
 }
 
@@ -176,8 +198,10 @@ impl std::fmt::Display for ResolvedVerdict {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum OverallVerdict {
+    /// All checked files passed all rules
     #[default]
     Pass,
+    /// At least one warning-severity failure, no errors
     Warn,
     /// Serializes as "error" to match the TypeScript implementation and SPEC.
     #[serde(rename = "error")]
@@ -197,15 +221,20 @@ impl std::fmt::Display for OverallVerdict {
 /// Verdict for a single rule on a single file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuleVerdict {
+    /// Rule identifier
     pub rule_id: String,
+    /// Rule display name
     pub rule_name: String,
+    /// Raw verdict from the LLM
     pub verdict: Verdict,
     /// Confidence 0.0–1.0. Runtime default (LLM omits): 0.5. Serde default (old cache): 1.0.
     #[serde(default = "confidence_default")]
     pub confidence: f64,
     #[serde(default)]
+    /// Human-readable explanation from the LLM
     pub reasoning: String,
     #[serde(default)]
+    /// Severity of this verdict's rule
     pub severity: Severity,
     /// All line numbers cited by the LLM (for verbose source context)
     #[serde(default)]
@@ -214,6 +243,7 @@ pub struct RuleVerdict {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<u32>,
     #[serde(default)]
+    /// Whether this verdict was served from cache
     pub cached: bool,
     /// True if this verdict came from the agentic pass
     #[serde(default)]
@@ -226,20 +256,28 @@ pub struct RuleVerdict {
 /// All verdicts for a single file
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileVerdict {
+    /// Relative file path
     pub file_path: String,
+    /// All rule verdicts for this file
     pub verdicts: Vec<RuleVerdict>,
+    /// True if all rules passed
     pub passed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// Highest failure severity across all failed rules
     pub max_severity: Option<Severity>,
     #[serde(default)]
+    /// True if this file was skipped (size, binary, etc.)
     pub skipped: bool,
     #[serde(default)]
+    /// Human-readable reason for skipping
     pub skip_reason: Option<String>,
     #[serde(default)]
+    /// True if all verdicts came from cache
     pub cached: bool,
 }
 
 impl FileVerdict {
+    /// Creates a new [`FileVerdict`] for the given file with its verdicts.
     pub fn new(file_path: String, verdicts: Vec<RuleVerdict>) -> Self {
         let passed = verdicts
             .iter()
@@ -265,6 +303,7 @@ impl FileVerdict {
         }
     }
 
+    /// Creates a [`FileVerdict`] representing a skipped file with the given reason.
     pub fn skipped(file_path: String, reason: String) -> Self {
         Self {
             file_path,
@@ -281,36 +320,58 @@ impl FileVerdict {
 /// Full PR report
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PRReport {
+    /// Base git ref used for the diff
     pub base_ref: String,
+    /// Head git ref used for the diff
     pub head_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    /// GitHub PR URL if provided
     pub pr_url: Option<String>,
     /// Model used for stateless evaluation
     pub model: String,
+    /// Per-file evaluation results
     pub files: Vec<FileVerdict>,
+    /// Aggregate verdict for the entire PR
     pub overall_verdict: OverallVerdict,
+    /// Number of files evaluated (excluding skipped)
     pub files_checked: usize,
+    /// Number of files where all rules passed
     pub files_passed: usize,
+    /// Number of files where at least one rule failed
     pub files_failed: usize,
+    /// Number of files skipped (binary, oversized, no rules, etc.)
     pub files_skipped: usize,
+    /// Total rule evaluations performed
     pub rules_evaluated: usize,
+    /// Number of rule evaluations that passed
     pub rules_passed: usize,
+    /// Number of rule evaluations that failed
     pub rules_failed: usize,
+    /// Number of rule evaluations served from cache
     pub cache_hits: usize,
     #[serde(default)]
+    /// Wall-clock duration of the check run in milliseconds
     pub duration_ms: u64,
 }
 
 /// File diff data for passing to LLM
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileDiff {
+    /// Relative file path
     pub path: String,
+    /// Annotated unified diff text
     pub diff: String,
+    /// Full file content, or `None` for deleted files
     pub content: Option<String>,
+    /// True if the file is binary (no diff shown)
     pub is_binary: bool,
+    /// True if the file was deleted in this diff
     pub is_deleted: bool,
+    /// True if the file was newly added
     pub is_new: bool,
+    /// True if the file exceeds `max_file_bytes`
     pub is_oversized: bool,
+    /// File size in bytes when oversized, otherwise `None`
     pub oversized_bytes: Option<u64>,
 }
 

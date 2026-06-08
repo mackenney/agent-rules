@@ -39,12 +39,15 @@ pub const CACHE_VERSION: u32 = 2;
 /// LLM provider selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Provider {
+    /// Anthropic API (direct)
     Anthropic,
+    /// OpenRouter API (OpenAI-compatible proxy)
     OpenRouter,
 }
 
 impl Provider {
     #[allow(dead_code)]
+    /// Returns the provider name as a static string slice.
     pub fn as_str(&self) -> &'static str {
         match self {
             Provider::Anthropic => "anthropic",
@@ -141,9 +144,12 @@ impl Default for CheckConfig {
 /// Output format options
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum OutputFormat {
+    /// Human-readable text (ruff/rustc diagnostic style)
     #[default]
     Text,
+    /// Machine-readable JSON
     Json,
+    /// GitHub PR comment markdown
     Github,
 }
 

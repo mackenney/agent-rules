@@ -20,24 +20,31 @@ pub(crate) const RETRY_BASE_DELAY_MS: u64 = 1000;
 /// LLM-specific errors with retry classification
 #[derive(Debug, Error)]
 pub enum LlmError {
+    /// API rate limit exceeded (HTTP 429)
     #[error("rate limited")]
     RateLimit,
 
+    /// Non-retryable server error with status code
     #[error("server error: {0}")]
     ServerError(u16),
 
+    /// Request timed out
     #[error("timeout")]
     Timeout,
 
+    /// Authentication failure (invalid or missing API key)
     #[error("auth error: {0}")]
     Auth(String),
 
+    /// Network or HTTP request failure
     #[error("request error: {0}")]
     Request(String),
 
+    /// Failed to parse the API response body
     #[error("failed to parse response: {0}")]
     Parse(String),
 
+    /// All retry attempts exhausted without success
     #[error("retries exhausted")]
     Exhausted,
 }

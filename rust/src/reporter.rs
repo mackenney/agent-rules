@@ -13,20 +13,30 @@ use crate::schema::{
 
 /// Color configuration. Respects NO_COLOR environment variable.
 pub struct Stylesheet {
+    /// Style for error messages
     pub error: Style,
+    /// Style for warning messages
     pub warning: Style,
+    /// Style for informational notes
     pub note: Style,
+    /// Style for file path display
     pub file_path: Style,
+    /// Style for line numbers
     pub line_number: Style,
+    /// Style for dimmed/secondary text
     pub dim: Style,
+    /// Style for success indicators
     pub success: Style,
+    /// Style for gutter decorations
     pub gutter: Style,
+    /// Style for vertical bar separators
     pub vertical_bar: Style,
     #[allow(dead_code)] // read in tests to assert color state
     enabled: bool,
 }
 
 impl Stylesheet {
+    /// Creates a new stylesheet, enabling colours only when `color_enabled` is true.
     pub fn new(color_enabled: bool) -> Self {
         let enabled = color_enabled && std::env::var("NO_COLOR").is_err();
 

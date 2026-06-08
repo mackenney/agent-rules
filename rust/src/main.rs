@@ -2,21 +2,6 @@
 //!
 //! Check PR diffs against LLM-powered rules defined in .agent-rules.toml files.
 
-mod agentic;
-mod cache;
-mod config;
-mod evaluator;
-mod git;
-mod llm;
-mod openrouter;
-mod parser;
-mod progress;
-mod prompt;
-mod reporter;
-mod resolver;
-mod runner;
-mod schema;
-
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use owo_colors::OwoColorize;
@@ -24,21 +9,20 @@ use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::cache::{Cache, CacheManager};
-use crate::config::{CheckConfig, OutputFormat, Provider, get_api_key};
-use crate::git::get_repo_root;
-use crate::parser::{RULE_FILE_NAME, parse_rule_file, validate_rule};
-use crate::progress::{NullProgress, create_progress_reporter};
-use crate::reporter::{Stylesheet, exit_code_for_report, print_report};
-use crate::resolver::{find_all_rule_files, resolve_rules_for_file};
-use crate::runner::{CheckInfra, check_pr};
-use crate::schema::Severity;
+use agent_rules::cache::{Cache, CacheManager};
+use agent_rules::config::{CheckConfig, OutputFormat, Provider, get_api_key};
+use agent_rules::git::get_repo_root;
+use agent_rules::parser::{RULE_FILE_NAME, parse_rule_file, validate_rule};
+use agent_rules::progress::{NullProgress, create_progress_reporter};
+use agent_rules::reporter::{Stylesheet, exit_code_for_report, print_report};
+use agent_rules::resolver::{find_all_rule_files, resolve_rules_for_file};
+use agent_rules::runner::{CheckInfra, check_pr};
+use agent_rules::schema::Severity;
 
-use crate::agentic::PiAgenticEvaluator;
-use crate::evaluator::{AgenticEvaluator, StatelessEvaluator};
-use crate::llm::AnthropicClient;
-use crate::openrouter::OpenRouterClient;
-
+use agent_rules::agentic::PiAgenticEvaluator;
+use agent_rules::evaluator::{AgenticEvaluator, StatelessEvaluator};
+use agent_rules::llm::AnthropicClient;
+use agent_rules::openrouter::OpenRouterClient;
 /// Check PR diffs against LLM-powered rules
 #[derive(Parser)]
 #[command(name = "agent-rules")]
@@ -130,7 +114,7 @@ struct CheckArgs {
     agentic_concurrency: usize,
 
     /// Model for agentic escalation
-    #[arg(long, default_value = config::DEFAULT_AGENTIC_MODEL)]
+    #[arg(long, default_value = agent_rules::config::DEFAULT_AGENTIC_MODEL)]
     agentic_model: String,
 
     /// Timeout for agentic sessions (ms)
@@ -275,8 +259,8 @@ async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
     let provider: Provider = args.provider.into();
 
     let model = args.model.unwrap_or_else(|| match provider {
-        Provider::Anthropic => config::DEFAULT_MODEL.to_string(),
-        Provider::OpenRouter => config::DEFAULT_OPENROUTER_MODEL.to_string(),
+        Provider::Anthropic => agent_rules::config::DEFAULT_MODEL.to_string(),
+        Provider::OpenRouter => agent_rules::config::DEFAULT_OPENROUTER_MODEL.to_string(),
     });
 
     let repo_root = match args.repo {

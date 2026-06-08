@@ -130,6 +130,7 @@ struct PromptTokensDetails {
     cache_write_tokens: Option<u32>,
 }
 
+/// HTTP client for the OpenRouter API, implementing [`StatelessEvaluator`].
 pub struct OpenRouterClient {
     client: reqwest::Client,
     api_key: String,
@@ -137,6 +138,7 @@ pub struct OpenRouterClient {
 }
 
 impl OpenRouterClient {
+    /// Creates a new client with the given API key.
     pub fn new(api_key: String) -> Result<Self, LlmError> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(120))

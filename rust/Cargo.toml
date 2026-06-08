@@ -24,6 +24,10 @@ which = "6"
 [features]
 test-e2e = []
 
+[[bin]]
+name = "agent-rules"
+path = "src/main.rs"
+
 [[test]]
 name = "integration"
 path = "tests/integration/mod.rs"
