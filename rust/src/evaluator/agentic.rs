@@ -10,8 +10,7 @@ use async_trait::async_trait;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use crate::evaluator::{AgenticEvalOpts, AgenticEvaluator};
-use crate::llm::LlmError;
+use super::{AgenticEvalOpts, AgenticEvaluator, LlmError};
 use crate::prompt::build_agentic_task;
 use crate::schema::{ContextHint, Rule, RuleVerdict, Verdict};
 

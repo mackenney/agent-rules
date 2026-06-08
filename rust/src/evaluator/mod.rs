@@ -1,14 +1,67 @@
 #![allow(dead_code, clippy::too_many_arguments)]
-//! Evaluator protocols: StatelessEvaluator and AgenticEvaluator traits
+//! Evaluator protocols and implementations
 //!
-//! These traits abstract the LLM evaluation layer, allowing CheckInfra to
-//! work with any implementation (Anthropic, mock, etc.) without coupling.
+//! Traits (`StatelessEvaluator`, `AgenticEvaluator`), shared types (`LlmError`),
+//! and all provider implementations (Anthropic, OpenRouter, agentic).
+
+mod agentic;
+mod anthropic;
+mod openrouter;
+
+pub use agentic::PiAgenticEvaluator;
+pub use anthropic::AnthropicClient;
+pub use openrouter::OpenRouterClient;
 
 use async_trait::async_trait;
 use std::time::Duration;
+use thiserror::Error;
 
-use crate::llm::LlmError;
 use crate::schema::{ContextHint, Rule, RuleVerdict};
+
+pub(crate) const MAX_RETRIES: u32 = 3;
+pub(crate) const RETRY_BASE_DELAY_MS: u64 = 1000;
+
+/// LLM-specific errors with retry classification
+#[derive(Debug, Error)]
+pub enum LlmError {
+    /// API rate limit exceeded (HTTP 429)
+    #[error("rate limited")]
+    RateLimit,
+
+    /// Non-retryable server error with status code
+    #[error("server error: {0}")]
+    ServerError(u16),
+
+    /// Request timed out
+    #[error("timeout")]
+    Timeout,
+
+    /// Authentication failure (invalid or missing API key)
+    #[error("auth error: {0}")]
+    Auth(String),
+
+    /// Network or HTTP request failure
+    #[error("request error: {0}")]
+    Request(String),
+
+    /// Failed to parse the API response body
+    #[error("failed to parse response: {0}")]
+    Parse(String),
+
+    /// All retry attempts exhausted without success
+    #[error("retries exhausted")]
+    Exhausted,
+}
+
+impl LlmError {
+    /// Returns true if this error is worth retrying
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            LlmError::RateLimit | LlmError::ServerError(_) | LlmError::Timeout
+        )
+    }
+}
 
 /// Options for stateless evaluation
 #[derive(Debug, Clone)]

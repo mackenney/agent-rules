@@ -4,60 +4,15 @@
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use thiserror::Error;
 
 use async_trait::async_trait;
 
-use crate::evaluator::{StatelessEvalOpts, StatelessEvaluator};
-use crate::prompt::{build_tool_schema, build_user_prompt, SYSTEM_PROMPT};
+use super::{LlmError, MAX_RETRIES, RETRY_BASE_DELAY_MS, StatelessEvalOpts, StatelessEvaluator};
+use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
 use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
-pub(crate) const MAX_RETRIES: u32 = 3;
-pub(crate) const RETRY_BASE_DELAY_MS: u64 = 1000;
-
-/// LLM-specific errors with retry classification
-#[derive(Debug, Error)]
-pub enum LlmError {
-    /// API rate limit exceeded (HTTP 429)
-    #[error("rate limited")]
-    RateLimit,
-
-    /// Non-retryable server error with status code
-    #[error("server error: {0}")]
-    ServerError(u16),
-
-    /// Request timed out
-    #[error("timeout")]
-    Timeout,
-
-    /// Authentication failure (invalid or missing API key)
-    #[error("auth error: {0}")]
-    Auth(String),
-
-    /// Network or HTTP request failure
-    #[error("request error: {0}")]
-    Request(String),
-
-    /// Failed to parse the API response body
-    #[error("failed to parse response: {0}")]
-    Parse(String),
-
-    /// All retry attempts exhausted without success
-    #[error("retries exhausted")]
-    Exhausted,
-}
-
-impl LlmError {
-    /// Returns true if this error is worth retrying
-    pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            LlmError::RateLimit | LlmError::ServerError(_) | LlmError::Timeout
-        )
-    }
-}
 
 /// Anthropic API client
 pub struct AnthropicClient {

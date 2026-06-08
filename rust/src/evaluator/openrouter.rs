@@ -8,9 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use crate::evaluator::{StatelessEvalOpts, StatelessEvaluator};
-use crate::llm::{LlmError, MAX_RETRIES, RETRY_BASE_DELAY_MS};
-use crate::prompt::{build_tool_schema, build_user_prompt, SYSTEM_PROMPT};
+use super::{LlmError, MAX_RETRIES, RETRY_BASE_DELAY_MS, StatelessEvalOpts, StatelessEvaluator};
+use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
 use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://openrouter.ai/api/v1";

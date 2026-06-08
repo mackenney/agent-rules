@@ -5,13 +5,10 @@
 //! using an LLM as the evaluator. Rules cascade from the repo root to
 //! subdirectories; child rules override parent rules by ID.
 
-pub mod agentic;
 pub mod cache;
 pub mod config;
 pub mod evaluator;
 pub mod git;
-pub mod llm;
-pub mod openrouter;
 pub mod parser;
 pub mod progress;
 pub mod prompt;
