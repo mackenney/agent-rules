@@ -11,6 +11,7 @@ Stable
 ## In Progress
 
 - `openrouter-evaluator` — Add OpenRouter as second LLM provider (Rust): `--provider openrouter`, `OpenRouterClient`, cache key fix; [plan](plans/openrouter-evaluator/PROGRESS.md)
+- `rust-module-refactor` — Rust src restructure: evaluator implementations grouped under `evaluator/`, command handlers extracted to `commands/`, `llm.rs` renamed to `evaluator/anthropic.rs`; [plan](plans/rust-module-refactor/PROGRESS.md)
 
 ## Queued
 
@@ -30,3 +31,5 @@ Stable
 - TypeScript evaluator protocol (`ignacio@llm/evaluator-protocol`) not yet merged — `StatelessEvaluator`/`AgenticEvaluator` interfaces exist in Rust but not yet extracted in TS
 - No CI configuration (GitHub Actions) for either implementation
 - Rust e2e tests require `ANTHROPIC_API_KEY` and are not run in any automated pipeline
+- `rust/src/llm.rs` and `rust/src/openrouter.rs` duplicate `call_with_retry` logic and have near-identical `parse_verdict` implementations; should share a common retry helper and verdict-parsing function
+- `agentic.rs` `normalize_verdict` makes raw HTTP requests instead of reusing `AnthropicClient`/`OpenRouterClient`; bypasses retry logic and duplicates request/response handling from the stateless clients

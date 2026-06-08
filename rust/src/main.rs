@@ -2,7 +2,7 @@
 //!
 //! Check PR diffs against LLM-powered rules defined in .agent-rules.toml files.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use owo_colors::OwoColorize;
 use std::io::IsTerminal;
@@ -10,13 +10,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_rules::cache::{Cache, CacheManager};
-use agent_rules::config::{CheckConfig, OutputFormat, Provider, get_api_key};
+use agent_rules::config::{get_api_key, CheckConfig, OutputFormat, Provider};
 use agent_rules::git::get_repo_root;
-use agent_rules::parser::{RULE_FILE_NAME, parse_rule_file, validate_rule};
-use agent_rules::progress::{NullProgress, create_progress_reporter};
-use agent_rules::reporter::{Stylesheet, exit_code_for_report, print_report};
+use agent_rules::parser::{parse_rule_file, validate_rule, RULE_FILE_NAME};
+use agent_rules::progress::{create_progress_reporter, NullProgress};
+use agent_rules::reporter::{exit_code_for_report, print_report, Stylesheet};
 use agent_rules::resolver::{find_all_rule_files, resolve_rules_for_file};
-use agent_rules::runner::{CheckInfra, check_pr};
+use agent_rules::runner::{check_pr, CheckInfra};
 use agent_rules::schema::Severity;
 
 use agent_rules::agentic::PiAgenticEvaluator;

@@ -2,7 +2,7 @@
 //!
 //! Uses std::process::Command (blocking). Wrap in spawn_blocking if needed.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::path::Path;
 
 use crate::schema::FileDiff;
