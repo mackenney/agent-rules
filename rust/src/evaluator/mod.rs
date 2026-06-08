@@ -1,8 +1,13 @@
-#![allow(dead_code, clippy::too_many_arguments)]
 //! Evaluator protocols and implementations
 //!
-//! Traits (`StatelessEvaluator`, `AgenticEvaluator`), shared types (`LlmError`),
-//! and all provider implementations (Anthropic, OpenRouter, agentic).
+//! This module owns shared types (`LlmError`, `StatelessEvalOpts`, `AgenticEvalOpts`)
+//! and the two evaluator traits (`StatelessEvaluator`, `AgenticEvaluator`).
+//! Provider implementations live in submodules:
+//! - `anthropic` — Anthropic API client (direct HTTP, tool-use protocol)
+//! - `openrouter` — OpenRouter client (OpenAI-compatible chat completions)
+//! - `agentic` — Pi-based agentic evaluator (subprocess, needs-more-context escalation)
+
+#![allow(clippy::too_many_arguments)]
 
 mod agentic;
 mod anthropic;
@@ -163,4 +168,20 @@ pub trait AgenticEvaluator: Send + Sync {
         repo_root: &std::path::Path,
         opts: &AgenticEvalOpts,
     ) -> Result<RuleVerdict, LlmError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LlmError;
+
+    #[test]
+    fn test_error_retryable() {
+        assert!(LlmError::RateLimit.is_retryable());
+        assert!(LlmError::ServerError(500).is_retryable());
+        assert!(LlmError::Timeout.is_retryable());
+        assert!(!LlmError::Auth("unauthorized".into()).is_retryable());
+        assert!(!LlmError::Parse("bad json".into()).is_retryable());
+        assert!(!LlmError::Request("connection refused".into()).is_retryable());
+        assert!(!LlmError::Exhausted.is_retryable());
+    }
 }

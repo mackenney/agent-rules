@@ -34,7 +34,6 @@ impl PiAgenticEvaluator {
     ///
     /// # Errors
     /// Returns error if `pi` binary is not found in PATH
-    #[allow(dead_code)]
     pub fn new(api_key: String, provider: crate::config::Provider) -> Result<Self, LlmError> {
         let pi_binary = which::which("pi")
             .map_err(|_| LlmError::Request("pi binary not found in PATH".to_string()))?;

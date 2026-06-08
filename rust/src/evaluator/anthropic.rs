@@ -1,6 +1,6 @@
 //! Anthropic API client with retry logic
 //!
-//! Uses reqwest for HTTP, thiserror for typed errors that support retry classification.
+//! Uses reqwest for HTTP. Retry and error classification via `LlmError` (defined in the parent module).
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -378,17 +378,6 @@ struct ContentBlock {
 mod tests {
     use super::*;
     use crate::schema::{RuleContext, Severity};
-
-    #[test]
-    fn test_llm_error_retryable() {
-        assert!(LlmError::RateLimit.is_retryable());
-        assert!(LlmError::ServerError(500).is_retryable());
-        assert!(LlmError::Timeout.is_retryable());
-        assert!(!LlmError::Auth("unauthorized".into()).is_retryable());
-        assert!(!LlmError::Parse("bad json".into()).is_retryable());
-        assert!(!LlmError::Request("connection refused".into()).is_retryable());
-        assert!(!LlmError::Exhausted.is_retryable());
-    }
 
     #[test]
     fn test_parse_verdict_missing_tool_use() {
