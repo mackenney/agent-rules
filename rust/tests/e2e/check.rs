@@ -1,9 +1,8 @@
 //! E2E tests for the `check` command.
 //!
-//! Each test requires ANTHROPIC_API_KEY and skips gracefully when absent.
+//! Each test requires ANTHROPIC_API_KEY (Anthropic tests) and/or OPENROUTER_API_KEY
 //! Tests mirror the TypeScript integration suite (stateless.test.ts).
 
-use predicates::prelude::*;
 use serde_json::Value;
 
 use crate::common::{cmd, require_env, test_repo};
@@ -203,18 +202,29 @@ fn second_run_hits_cache() {
     );
 }
 
-/// OpenRouter: bad controller should fail (exit 1 or 2) — requires OPENROUTER_API_KEY.
+/// OpenRouter model used for e2e tests — reads OPENROUTER_MODEL env var,
+/// falls back to deepseek/deepseek-v4-flash.
+fn openrouter_model() -> String {
+    std::env::var("OPENROUTER_MODEL").unwrap_or_else(|_| "deepseek/deepseek-v4-flash".to_string())
+}
+
+/// OpenRouter: bad controller should fail (exit 2) — requires OPENROUTER_API_KEY.
 #[test]
 fn openrouter_bad_controller_exits_2() {
     let Some(key) = require_env("OPENROUTER_API_KEY") else {
         return;
     };
+    let model = openrouter_model();
 
     cmd()
         .args([
             "check",
             "--provider",
             "openrouter",
+            "--model",
+            &model,
+            "--agentic-model",
+            &model,
             "--files",
             "src/api/bad_controller.py",
             "--repo",
@@ -231,12 +241,17 @@ fn openrouter_clean_controller_exits_0() {
     let Some(key) = require_env("OPENROUTER_API_KEY") else {
         return;
     };
+    let model = openrouter_model();
 
     cmd()
         .args([
             "check",
             "--provider",
             "openrouter",
+            "--model",
+            &model,
+            "--agentic-model",
+            &model,
             "--files",
             "src/api/clean_controller.py",
             "--repo",
@@ -245,4 +260,32 @@ fn openrouter_clean_controller_exits_0() {
         .env("OPENROUTER_API_KEY", &key)
         .assert()
         .code(0);
+}
+
+/// OpenRouter: payment controller triggers agentic rules (context=agentic) → exit 2.
+/// Exercises both stateless and agentic evaluators via the same provider/model.
+#[test]
+fn openrouter_payment_controller_exits_2() {
+    let Some(key) = require_env("OPENROUTER_API_KEY") else {
+        return;
+    };
+    let model = openrouter_model();
+
+    cmd()
+        .args([
+            "check",
+            "--provider",
+            "openrouter",
+            "--model",
+            &model,
+            "--agentic-model",
+            &model,
+            "--files",
+            "src/api/payment_controller.py",
+            "--repo",
+        ])
+        .arg(test_repo())
+        .env("OPENROUTER_API_KEY", &key)
+        .assert()
+        .code(2);
 }
