@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use super::{LlmError, StatelessEvalOpts, StatelessEvaluator, MAX_RETRIES, RETRY_BASE_DELAY_MS};
-use crate::prompt::{build_tool_schema, build_user_prompt, SYSTEM_PROMPT};
+use super::{LlmError, MAX_RETRIES, RETRY_BASE_DELAY_MS, StatelessEvalOpts, StatelessEvaluator};
+use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
 use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://api.anthropic.com";
@@ -325,6 +325,135 @@ impl StatelessEvaluator for AnthropicClient {
             opts.timeout,
         )
         .await
+    }
+    async fn normalize(
+        &self,
+        raw_output: &str,
+        rule: &Rule,
+        file_path: &str,
+        model: &str,
+        timeout: Duration,
+        trace: bool,
+    ) -> Result<RuleVerdict, LlmError> {
+        let system = "Extract a structured rule evaluation verdict from the agent's analysis. \
+                      The agent has already done the investigation.";
+
+        let user_content = format!(
+            "File: {}\nRule: {} \u{2014} {}\n\nAgent analysis:\n{}\n\nExtract the verdict.",
+            file_path,
+            rule.id,
+            rule.name,
+            &raw_output[..raw_output.len().min(8000)]
+        );
+
+        let tool = serde_json::json!({
+            "name": "submit_verdict",
+            "description": "Submit the extracted verdict",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["pass", "fail"]
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                    },
+                    "reasoning": {
+                        "type": "string"
+                    },
+                    "line_refs": {
+                        "type": "array",
+                        "items": {"type": "integer"}
+                    }
+                },
+                "required": ["verdict", "confidence", "reasoning", "line_refs"]
+            }
+        });
+
+        let request = MessagesRequest {
+            model,
+            max_tokens: 1024,
+            system,
+            messages: vec![Message {
+                role: "user",
+                content: &user_content,
+            }],
+            tools: vec![tool],
+            tool_choice: ToolChoice {
+                type_: "tool",
+                name: Some("submit_verdict"),
+                disable_parallel_tool_use: None,
+            },
+        };
+
+        if trace {
+            eprintln!("[TRACE] Normalization request for {}", file_path);
+        }
+
+        let response = self.call_with_retry(&request, timeout).await?;
+
+        if trace {
+            eprintln!("[TRACE] Normalization response: {:?}", response);
+        }
+
+        for block in &response.content {
+            if block.type_ == "tool_use" && block.name.as_deref() == Some("submit_verdict") {
+                if let Some(input) = &block.input {
+                    let verdict_str = input
+                        .get("verdict")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("fail");
+
+                    let verdict = match verdict_str {
+                        "pass" => Verdict::Pass,
+                        _ => Verdict::Fail,
+                    };
+
+                    let confidence = input
+                        .get("confidence")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.5)
+                        .clamp(0.0, 1.0);
+
+                    let reasoning = input
+                        .get("reasoning")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+
+                    let line_refs: Vec<u32> = input
+                        .get("line_refs")
+                        .and_then(|v| v.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_u64().map(|n| n as u32))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+
+                    return Ok(RuleVerdict {
+                        rule_id: rule.id.clone(),
+                        rule_name: rule.name.clone(),
+                        verdict,
+                        confidence,
+                        reasoning,
+                        severity: rule.severity,
+                        line_refs: line_refs.clone(),
+                        line: line_refs.first().copied(),
+                        cached: false,
+                        from_agentic: true,
+                        context_hint: None,
+                    });
+                }
+            }
+        }
+
+        Err(LlmError::Parse(
+            "no tool use in normalization response".to_string(),
+        ))
     }
 }
 
