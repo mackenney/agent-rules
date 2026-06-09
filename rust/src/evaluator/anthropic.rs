@@ -9,8 +9,8 @@ use async_trait::async_trait;
 
 use super::helpers::{make_fail_verdict, parse_verdict_from_input, retry_with_backoff};
 use super::{LlmError, StatelessEvalOpts, StatelessEvaluator};
-use crate::prompt::{build_tool_schema, build_user_prompt, SYSTEM_PROMPT};
-use crate::schema::{Rule, RuleVerdict, Verdict};
+use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
+use crate::schema::{Rule, RuleVerdict};
 
 const API_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
@@ -277,7 +277,16 @@ impl StatelessEvaluator for AnthropicClient {
             eprintln!("[TRACE] Normalization request for {}", file_path);
         }
 
-        let response = self.call_with_retry(&request, timeout).await?;
+        let response = match self.call_with_retry(&request, timeout).await {
+            Ok(r) => r,
+            Err(LlmError::Exhausted) => {
+                return Ok(make_fail_verdict(
+                    rule,
+                    "Normalization failed after retries",
+                ));
+            }
+            Err(e) => return Err(e),
+        };
 
         if trace {
             eprintln!("[TRACE] Normalization response: {:?}", response);
@@ -286,57 +295,17 @@ impl StatelessEvaluator for AnthropicClient {
         for block in &response.content {
             if block.type_ == "tool_use" && block.name.as_deref() == Some("submit_verdict") {
                 if let Some(input) = &block.input {
-                    let verdict_str = input
-                        .get("verdict")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("fail");
-
-                    let verdict = match verdict_str {
-                        "pass" => Verdict::Pass,
-                        _ => Verdict::Fail,
-                    };
-
-                    let confidence = input
-                        .get("confidence")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.5)
-                        .clamp(0.0, 1.0);
-
-                    let reasoning = input
-                        .get("reasoning")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    let line_refs: Vec<u32> = input
-                        .get("line_refs")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| v.as_u64().map(|n| n as u32))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-
-                    return Ok(RuleVerdict {
-                        rule_id: rule.id.clone(),
-                        rule_name: rule.name.clone(),
-                        verdict,
-                        confidence,
-                        reasoning,
-                        severity: rule.severity,
-                        line_refs: line_refs.clone(),
-                        line: line_refs.first().copied(),
-                        cached: false,
-                        from_agentic: true,
-                        context_hint: None,
-                    });
+                    let mut verdict = parse_verdict_from_input(input, rule);
+                    verdict.from_agentic = true;
+                    verdict.context_hint = None;
+                    return Ok(verdict);
                 }
             }
         }
 
-        Err(LlmError::Parse(
-            "no tool use in normalization response".to_string(),
+        Ok(make_fail_verdict(
+            rule,
+            "No verdict received from normalization",
         ))
     }
 }
@@ -390,7 +359,7 @@ struct ContentBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{RuleContext, Severity};
+    use crate::schema::{RuleContext, Severity, Verdict};
 
     #[test]
     fn test_parse_verdict_missing_tool_use() {

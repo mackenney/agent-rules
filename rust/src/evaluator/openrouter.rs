@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use super::helpers::{make_fail_verdict, parse_verdict_from_input, retry_with_backoff};
 use super::{LlmError, StatelessEvalOpts, StatelessEvaluator};
-use crate::prompt::{build_tool_schema, build_user_prompt, SYSTEM_PROMPT};
-use crate::schema::{Rule, RuleVerdict, Verdict};
+use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
+use crate::schema::{Rule, RuleVerdict};
 
 const API_BASE_URL: &str = "https://openrouter.ai/api/v1";
 static OPENAI_TOOL_SCHEMA: OnceLock<serde_json::Value> = OnceLock::new();
@@ -418,7 +418,16 @@ impl StatelessEvaluator for OpenRouterClient {
             eprintln!("[TRACE] Normalization request for {}", file_path);
         }
 
-        let response = self.call_with_retry(&request, timeout).await?;
+        let response = match self.call_with_retry(&request, timeout).await {
+            Ok(r) => r,
+            Err(LlmError::Exhausted) => {
+                return Ok(make_fail_verdict(
+                    rule,
+                    "Normalization failed after retries",
+                ));
+            }
+            Err(e) => return Err(e),
+        };
 
         if trace {
             eprintln!("[TRACE] Normalization response: {:?}", response);
@@ -431,67 +440,24 @@ impl StatelessEvaluator for OpenRouterClient {
             .and_then(|tc| tc.first());
 
         let Some(tool_call) = tool_call else {
-            return Err(LlmError::Parse(
-                "no tool call in normalization response".to_string(),
+            return Ok(make_fail_verdict(
+                rule,
+                "No verdict received from normalization",
             ));
         };
 
         let input = tool_call.function.arguments.to_value()?;
-
-        let verdict_str = input
-            .get("verdict")
-            .and_then(|v| v.as_str())
-            .unwrap_or("fail");
-
-        let verdict = match verdict_str {
-            "pass" => Verdict::Pass,
-            _ => Verdict::Fail,
-        };
-
-        let confidence = input
-            .get("confidence")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.5)
-            .clamp(0.0, 1.0);
-
-        let reasoning = input
-            .get("reasoning")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let line_refs: Vec<u32> = input
-            .get("line_refs")
-            .and_then(|v| v.as_array())
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(|v| v.as_u64().map(|n| n as u32))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let line = line_refs.first().copied();
-
-        Ok(RuleVerdict {
-            rule_id: rule.id.clone(),
-            rule_name: rule.name.clone(),
-            verdict,
-            confidence,
-            reasoning,
-            severity: rule.severity,
-            line_refs,
-            line,
-            cached: false,
-            from_agentic: true,
-            context_hint: None,
-        })
+        let mut verdict = parse_verdict_from_input(&input, rule);
+        verdict.from_agentic = true;
+        verdict.context_hint = None;
+        Ok(verdict)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{RuleContext, Severity};
+    use crate::schema::{RuleContext, Severity, Verdict};
 
     fn make_test_rule() -> Rule {
         Rule {

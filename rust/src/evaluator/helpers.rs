@@ -8,7 +8,6 @@ use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
 /// Calls `call_once` up to `MAX_RETRIES` times. Retryable errors (rate limit,
 /// server error, timeout) trigger a delay; non-retryable errors propagate
 /// immediately.
-#[allow(dead_code)]
 pub(super) async fn retry_with_backoff<F, Fut, Resp>(mut call_once: F) -> Result<Resp, LlmError>
 where
     F: FnMut() -> Fut,
@@ -36,7 +35,6 @@ where
 /// Handles verdict parsing (pass/fail/needs-more-context), NMC collapse for
 /// stateless rules, confidence clamping, line_refs, and context_hint.
 /// Infallible — every field has a fallback default.
-#[allow(dead_code)]
 pub(super) fn parse_verdict_from_input(input: &serde_json::Value, rule: &Rule) -> RuleVerdict {
     let verdict_str = input
         .get("verdict")
@@ -119,7 +117,6 @@ pub(super) fn parse_verdict_from_input(input: &serde_json::Value, rule: &Rule) -
 }
 
 /// Construct a standard fail verdict with zero confidence and no context.
-#[allow(dead_code)]
 pub(super) fn make_fail_verdict(rule: &Rule, reasoning: &str) -> RuleVerdict {
     RuleVerdict {
         rule_id: rule.id.clone(),
@@ -197,9 +194,10 @@ mod tests {
 
         let v = parse_verdict_from_input(&input, &rule);
         assert_eq!(v.verdict, Verdict::Fail);
-        assert!(v
-            .reasoning
-            .contains("[collapsed from needs-more-context: stateless rule]"));
+        assert!(
+            v.reasoning
+                .contains("[collapsed from needs-more-context: stateless rule]")
+        );
     }
 
     #[test]
