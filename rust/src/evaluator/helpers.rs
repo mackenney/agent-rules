@@ -197,10 +197,9 @@ mod tests {
 
         let v = parse_verdict_from_input(&input, &rule);
         assert_eq!(v.verdict, Verdict::Fail);
-        assert!(
-            v.reasoning
-                .contains("[collapsed from needs-more-context: stateless rule]")
-        );
+        assert!(v
+            .reasoning
+            .contains("[collapsed from needs-more-context: stateless rule]"));
     }
 
     #[test]
