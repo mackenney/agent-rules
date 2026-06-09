@@ -132,6 +132,27 @@ pub trait StatelessEvaluator: Send + Sync {
         is_new_file: bool,
         opts: &StatelessEvalOpts,
     ) -> Result<RuleVerdict, LlmError>;
+    /// Normalize raw agentic output into a structured verdict
+    ///
+    /// Used by the agentic evaluator to extract a pass/fail verdict from
+    /// unstructured subprocess output. Implementations reuse their existing
+    /// HTTP client and retry infrastructure.
+    ///
+    /// The default returns an error; override in providers that support normalization.
+    async fn normalize(
+        &self,
+        raw_output: &str,
+        rule: &Rule,
+        file_path: &str,
+        model: &str,
+        timeout: Duration,
+        trace: bool,
+    ) -> Result<RuleVerdict, LlmError> {
+        let _ = (raw_output, rule, file_path, model, timeout, trace);
+        Err(LlmError::Request(
+            "normalize not supported by this evaluator".to_string(),
+        ))
+    }
 }
 
 /// Agentic evaluator trait — evaluates (file, rule) with filesystem read access
