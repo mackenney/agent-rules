@@ -11,6 +11,7 @@
 
 mod agentic;
 mod anthropic;
+mod helpers;
 mod openrouter;
 
 pub use agentic::PiAgenticEvaluator;
