@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use super::{LlmError, StatelessEvalOpts, StatelessEvaluator, MAX_RETRIES, RETRY_BASE_DELAY_MS};
-use crate::prompt::{build_tool_schema, build_user_prompt, SYSTEM_PROMPT};
+use super::{LlmError, MAX_RETRIES, RETRY_BASE_DELAY_MS, StatelessEvalOpts, StatelessEvaluator};
+use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
 use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://openrouter.ai/api/v1";
@@ -464,6 +464,150 @@ impl StatelessEvaluator for OpenRouterClient {
             opts.timeout,
         )
         .await
+    }
+    async fn normalize(
+        &self,
+        raw_output: &str,
+        rule: &Rule,
+        file_path: &str,
+        model: &str,
+        timeout: Duration,
+        trace: bool,
+    ) -> Result<RuleVerdict, LlmError> {
+        let system = "Extract a structured rule evaluation verdict from the agent's analysis. \
+                      The agent has already done the investigation.";
+
+        let user_content = format!(
+            "File: {}\nRule: {} \u{2014} {}\n\nAgent analysis:\n{}\n\nExtract the verdict.",
+            file_path,
+            rule.id,
+            rule.name,
+            &raw_output[..raw_output.len().min(8000)]
+        );
+
+        let tool = serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "submit_verdict",
+                "description": "Submit the extracted verdict",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "verdict": {
+                            "type": "string",
+                            "enum": ["pass", "fail"]
+                        },
+                        "confidence": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1
+                        },
+                        "reasoning": {
+                            "type": "string"
+                        },
+                        "line_refs": {
+                            "type": "array",
+                            "items": {"type": "integer"}
+                        }
+                    },
+                    "required": ["verdict", "confidence", "reasoning", "line_refs"]
+                }
+            }
+        });
+
+        let messages = vec![
+            ChatMessage {
+                role: "system".to_string(),
+                content: ChatMessageContent::Text(system.to_string()),
+            },
+            ChatMessage {
+                role: "user".to_string(),
+                content: ChatMessageContent::Text(user_content),
+            },
+        ];
+
+        let request = ChatCompletionRequest {
+            model,
+            max_tokens: 1024,
+            messages,
+            tools: vec![tool],
+            tool_choice: serde_json::json!({
+                "type": "function",
+                "function": {"name": "submit_verdict"}
+            }),
+        };
+
+        if trace {
+            eprintln!("[TRACE] Normalization request for {}", file_path);
+        }
+
+        let response = self.call_with_retry(&request, timeout).await?;
+
+        if trace {
+            eprintln!("[TRACE] Normalization response: {:?}", response);
+        }
+
+        let tool_call = response
+            .choices
+            .first()
+            .and_then(|c| c.message.tool_calls.as_ref())
+            .and_then(|tc| tc.first());
+
+        let Some(tool_call) = tool_call else {
+            return Err(LlmError::Parse(
+                "no tool call in normalization response".to_string(),
+            ));
+        };
+
+        let input = tool_call.function.arguments.to_value()?;
+
+        let verdict_str = input
+            .get("verdict")
+            .and_then(|v| v.as_str())
+            .unwrap_or("fail");
+
+        let verdict = match verdict_str {
+            "pass" => Verdict::Pass,
+            _ => Verdict::Fail,
+        };
+
+        let confidence = input
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.5)
+            .clamp(0.0, 1.0);
+
+        let reasoning = input
+            .get("reasoning")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let line_refs: Vec<u32> = input
+            .get("line_refs")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_u64().map(|n| n as u32))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let line = line_refs.first().copied();
+
+        Ok(RuleVerdict {
+            rule_id: rule.id.clone(),
+            rule_name: rule.name.clone(),
+            verdict,
+            confidence,
+            reasoning,
+            severity: rule.severity,
+            line_refs,
+            line,
+            cached: false,
+            from_agentic: true,
+            context_hint: None,
+        })
     }
 }
 
