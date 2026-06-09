@@ -8,9 +8,10 @@ use serde::{Deserialize, Serialize};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use super::{LlmError, MAX_RETRIES, RETRY_BASE_DELAY_MS, StatelessEvalOpts, StatelessEvaluator};
-use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
-use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
+use super::helpers::{make_fail_verdict, parse_verdict_from_input, retry_with_backoff};
+use super::{LlmError, StatelessEvalOpts, StatelessEvaluator};
+use crate::prompt::{build_tool_schema, build_user_prompt, SYSTEM_PROMPT};
+use crate::schema::{Rule, RuleVerdict, Verdict};
 
 const API_BASE_URL: &str = "https://openrouter.ai/api/v1";
 static OPENAI_TOOL_SCHEMA: OnceLock<serde_json::Value> = OnceLock::new();
@@ -243,21 +244,7 @@ impl OpenRouterClient {
         request: &ChatCompletionRequest<'_>,
         timeout: Duration,
     ) -> Result<ChatCompletionResponse, LlmError> {
-        let mut last_error = LlmError::Exhausted;
-
-        for attempt in 0..MAX_RETRIES {
-            match self.call_once(request, timeout).await {
-                Ok(response) => return Ok(response),
-                Err(e) if e.is_retryable() && attempt < MAX_RETRIES - 1 => {
-                    let delay = RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
-                    tokio::time::sleep(Duration::from_millis(delay)).await;
-                    last_error = e;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        Err(last_error)
+        retry_with_backoff(|| self.call_once(request, timeout)).await
     }
 
     fn parse_verdict(
@@ -272,119 +259,21 @@ impl OpenRouterClient {
             .and_then(|tc| tc.first());
 
         let Some(tool_call) = tool_call else {
-            return Ok(RuleVerdict {
-                rule_id: rule.id.clone(),
-                rule_name: rule.name.clone(),
-                verdict: Verdict::Fail,
-                confidence: 0.0,
-                reasoning: "No verdict received from LLM".to_string(),
-                severity: rule.severity,
-                line_refs: vec![],
-                line: None,
-                cached: false,
-                from_agentic: false,
-                context_hint: None,
-            });
+            return Ok(make_fail_verdict(rule, "No verdict received from LLM"));
         };
 
         if tool_call.function.name != "submit_verdict" {
-            return Ok(RuleVerdict {
-                rule_id: rule.id.clone(),
-                rule_name: rule.name.clone(),
-                verdict: Verdict::Fail,
-                confidence: 0.0,
-                reasoning: format!(
+            return Ok(make_fail_verdict(
+                rule,
+                &format!(
                     "Unexpected tool call '{}'; expected 'submit_verdict'",
                     tool_call.function.name
                 ),
-                severity: rule.severity,
-                line_refs: vec![],
-                line: None,
-                cached: false,
-                from_agentic: false,
-                context_hint: None,
-            });
+            ));
         }
+
         let input = tool_call.function.arguments.to_value()?;
-
-        let verdict_str = input
-            .get("verdict")
-            .and_then(|v| v.as_str())
-            .unwrap_or("fail");
-
-        let mut verdict = match verdict_str {
-            "pass" => Verdict::Pass,
-            "needs-more-context" => Verdict::NeedsMoreContext,
-            _ => Verdict::Fail,
-        };
-
-        let confidence = input
-            .get("confidence")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(0.5)
-            .clamp(0.0, 1.0);
-
-        let reasoning = input
-            .get("reasoning")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-
-        let reasoning =
-            if verdict == Verdict::NeedsMoreContext && rule.context == RuleContext::Stateless {
-                verdict = Verdict::Fail;
-                format!(
-                    "{} [collapsed from needs-more-context: stateless rule]",
-                    reasoning.trim()
-                )
-            } else {
-                reasoning
-            };
-
-        let line_refs: Vec<u64> = input
-            .get("line_refs")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
-            .unwrap_or_default();
-        let line_refs_u32: Vec<u32> = line_refs
-            .iter()
-            .filter_map(|&l| u32::try_from(l).ok())
-            .collect();
-        let line = line_refs_u32.first().copied();
-
-        let context_hint = input
-            .get("context_hint")
-            .and_then(|v| v.as_object())
-            .map(|obj| ContextHint {
-                read_files: obj
-                    .get("read_files")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|v| v.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                question: obj
-                    .get("question")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string(),
-            });
-
-        Ok(RuleVerdict {
-            rule_id: rule.id.clone(),
-            rule_name: rule.name.clone(),
-            verdict,
-            confidence,
-            reasoning,
-            severity: rule.severity,
-            line_refs: line_refs_u32,
-            line,
-            cached: false,
-            from_agentic: false,
-            context_hint,
-        })
+        Ok(parse_verdict_from_input(&input, rule))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -420,19 +309,7 @@ impl OpenRouterClient {
             Ok(r) => r,
             Err(LlmError::Auth(msg)) => return Err(LlmError::Auth(msg)),
             Err(LlmError::Exhausted) => {
-                return Ok(RuleVerdict {
-                    rule_id: rule.id.clone(),
-                    rule_name: rule.name.clone(),
-                    verdict: Verdict::Fail,
-                    confidence: 0.0,
-                    reasoning: "LLM call failed after retries".to_string(),
-                    severity: rule.severity,
-                    line_refs: vec![],
-                    line: None,
-                    cached: false,
-                    from_agentic: false,
-                    context_hint: None,
-                });
+                return Ok(make_fail_verdict(rule, "LLM call failed after retries"));
             }
             Err(e) => return Err(e),
         };
