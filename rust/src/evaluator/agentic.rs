@@ -5,24 +5,22 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-use super::{AgenticEvalOpts, AgenticEvaluator, LlmError};
+use super::{AgenticEvalOpts, AgenticEvaluator, LlmError, StatelessEvaluator};
 use crate::prompt::build_agentic_task;
 use crate::schema::{ContextHint, Rule, RuleVerdict, Verdict};
-
-/// Maximum retries for verdict normalization
-#[allow(dead_code)]
-const MAX_NORMALIZE_RETRIES: u32 = 2;
 
 /// Agentic evaluator using pi subprocess
 pub struct PiAgenticEvaluator {
     api_key: String,
     provider: crate::config::Provider,
     pi_binary: PathBuf,
+    normalizer: Arc<dyn StatelessEvaluator>,
 }
 
 impl PiAgenticEvaluator {
@@ -34,7 +32,11 @@ impl PiAgenticEvaluator {
     ///
     /// # Errors
     /// Returns error if `pi` binary is not found in PATH
-    pub fn new(api_key: String, provider: crate::config::Provider) -> Result<Self, LlmError> {
+    pub fn new(
+        api_key: String,
+        provider: crate::config::Provider,
+        normalizer: Arc<dyn StatelessEvaluator>,
+    ) -> Result<Self, LlmError> {
         let pi_binary = which::which("pi")
             .map_err(|_| LlmError::Request("pi binary not found in PATH".to_string()))?;
 
@@ -42,6 +44,7 @@ impl PiAgenticEvaluator {
             api_key,
             provider,
             pi_binary,
+            normalizer,
         })
     }
 
@@ -195,314 +198,16 @@ impl PiAgenticEvaluator {
         file_path: &str,
         opts: &AgenticEvalOpts,
     ) -> Result<RuleVerdict, LlmError> {
-        match self.provider {
-            crate::config::Provider::Anthropic => {
-                self.normalize_via_anthropic(raw_output, rule, file_path, opts)
-                    .await
-            }
-            crate::config::Provider::OpenRouter => {
-                self.normalize_via_openrouter(raw_output, rule, file_path, opts)
-                    .await
-            }
-        }
-    }
-
-    /// Normalize verdict using the Anthropic Messages API.
-    async fn normalize_via_anthropic(
-        &self,
-        raw_output: &str,
-        rule: &Rule,
-        file_path: &str,
-        opts: &AgenticEvalOpts,
-    ) -> Result<RuleVerdict, LlmError> {
-        let client = reqwest::Client::new();
-        let url = "https://api.anthropic.com/v1/messages";
-
-        let system = "Extract a structured rule evaluation verdict from the agent's analysis. \
-                      The agent has already done the investigation.";
-
-        let user_content = format!(
-            "File: {}\nRule: {} \u{2014} {}\n\nAgent analysis:\n{}\n\nExtract the verdict.",
-            file_path,
-            rule.id,
-            rule.name,
-            &raw_output[..raw_output.len().min(8000)]
-        );
-
-        let tool = serde_json::json!({
-            "name": "submit_verdict",
-            "description": "Submit the extracted verdict",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "verdict": {
-                        "type": "string",
-                        "enum": ["pass", "fail"]
-                    },
-                    "confidence": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 1
-                    },
-                    "reasoning": {
-                        "type": "string"
-                    },
-                    "line_refs": {
-                        "type": "array",
-                        "items": {"type": "integer"}
-                    }
-                },
-                "required": ["verdict", "confidence", "reasoning", "line_refs"]
-            }
-        });
-
-        let body = serde_json::json!({
-            "model": opts.model,
-            "max_tokens": 1024,
-            "system": system,
-            "messages": [{"role": "user", "content": user_content}],
-            "tools": [tool],
-            "tool_choice": {"type": "tool", "name": "submit_verdict"}
-        });
-
-        let response = client
-            .post(url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
+        self.normalizer
+            .normalize(
+                raw_output,
+                rule,
+                file_path,
+                &opts.model,
+                opts.timeout,
+                opts.trace,
+            )
             .await
-            .map_err(|e| LlmError::Request(e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(LlmError::Request(format!(
-                "normalization request failed: {}",
-                response.status()
-            )));
-        }
-
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| LlmError::Parse(e.to_string()))?;
-
-        if let Some(content) = json.get("content").and_then(|c| c.as_array()) {
-            for block in content {
-                if block.get("type").and_then(|t| t.as_str()) == Some("tool_use") {
-                    if let Some(input) = block.get("input") {
-                        let verdict_str = input
-                            .get("verdict")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("fail");
-
-                        let verdict = match verdict_str {
-                            "pass" => Verdict::Pass,
-                            _ => Verdict::Fail,
-                        };
-
-                        let confidence = input
-                            .get("confidence")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.5);
-
-                        let reasoning = input
-                            .get("reasoning")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-
-                        let line_refs: Vec<u32> = input
-                            .get("line_refs")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_u64().map(|n| n as u32))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-
-                        return Ok(RuleVerdict {
-                            rule_id: rule.id.clone(),
-                            rule_name: rule.name.clone(),
-                            verdict,
-                            confidence,
-                            reasoning,
-                            severity: rule.severity,
-                            line_refs: line_refs.clone(),
-                            line: line_refs.first().copied(),
-                            cached: false,
-                            from_agentic: true,
-                            context_hint: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        Err(LlmError::Parse(
-            "no tool use in normalization response".to_string(),
-        ))
-    }
-
-    /// Normalize verdict using the OpenRouter chat completions API.
-    async fn normalize_via_openrouter(
-        &self,
-        raw_output: &str,
-        rule: &Rule,
-        file_path: &str,
-        opts: &AgenticEvalOpts,
-    ) -> Result<RuleVerdict, LlmError> {
-        let client = reqwest::Client::new();
-        let url = "https://openrouter.ai/api/v1/chat/completions";
-
-        let system = "Extract a structured rule evaluation verdict from the agent's analysis. \
-                      The agent has already done the investigation.";
-
-        let user_content = format!(
-            "File: {}\nRule: {} \u{2014} {}\n\nAgent analysis:\n{}\n\nExtract the verdict.",
-            file_path,
-            rule.id,
-            rule.name,
-            &raw_output[..raw_output.len().min(8000)]
-        );
-
-        let tool = serde_json::json!({
-            "type": "function",
-            "function": {
-                "name": "submit_verdict",
-                "description": "Submit the extracted verdict",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "verdict": {
-                            "type": "string",
-                            "enum": ["pass", "fail"]
-                        },
-                        "confidence": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                        },
-                        "reasoning": {
-                            "type": "string"
-                        },
-                        "line_refs": {
-                            "type": "array",
-                            "items": {"type": "integer"}
-                        }
-                    },
-                    "required": ["verdict", "confidence", "reasoning", "line_refs"]
-                }
-            }
-        });
-
-        let body = serde_json::json!({
-            "model": opts.model,
-            "max_tokens": 1024,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_content}
-            ],
-            "tools": [tool],
-            "tool_choice": {"type": "function", "function": {"name": "submit_verdict"}}
-        });
-
-        let response = client
-            .post(url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("content-type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| LlmError::Request(e.to_string()))?;
-
-        if !response.status().is_success() {
-            return Err(LlmError::Request(format!(
-                "normalization request failed: {}",
-                response.status()
-            )));
-        }
-
-        let json: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| LlmError::Parse(e.to_string()))?;
-
-        if let Some(choices) = json.get("choices").and_then(|c| c.as_array()) {
-            if let Some(choice) = choices.first() {
-                if let Some(tool_calls) = choice
-                    .get("message")
-                    .and_then(|m| m.get("tool_calls"))
-                    .and_then(|tc| tc.as_array())
-                {
-                    if let Some(call) = tool_calls.first() {
-                        let args_raw = call
-                            .get("function")
-                            .and_then(|f| f.get("arguments"))
-                            .ok_or_else(|| LlmError::Parse("missing arguments".to_string()))?;
-
-                        let input: serde_json::Value = if let Some(s) = args_raw.as_str() {
-                            serde_json::from_str(s).map_err(|e| LlmError::Parse(e.to_string()))?
-                        } else {
-                            args_raw.clone()
-                        };
-
-                        let verdict_str = input
-                            .get("verdict")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("fail");
-
-                        let verdict = match verdict_str {
-                            "pass" => Verdict::Pass,
-                            _ => Verdict::Fail,
-                        };
-
-                        let confidence = input
-                            .get("confidence")
-                            .and_then(|v| v.as_f64())
-                            .unwrap_or(0.5)
-                            .clamp(0.0, 1.0);
-
-                        let reasoning = input
-                            .get("reasoning")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-
-                        let line_refs: Vec<u32> = input
-                            .get("line_refs")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| {
-                                arr.iter()
-                                    .filter_map(|v| v.as_u64().map(|n| n as u32))
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-
-                        let line = line_refs.first().copied();
-
-                        return Ok(RuleVerdict {
-                            rule_id: rule.id.clone(),
-                            rule_name: rule.name.clone(),
-                            verdict,
-                            confidence,
-                            reasoning,
-                            severity: rule.severity,
-                            line_refs,
-                            line,
-                            cached: false,
-                            from_agentic: true,
-                            context_hint: None,
-                        });
-                    }
-                }
-            }
-        }
-
-        Err(LlmError::Parse(
-            "no tool call in OpenRouter normalization response".to_string(),
-        ))
     }
 
     /// Create a fallback verdict for errors/timeouts

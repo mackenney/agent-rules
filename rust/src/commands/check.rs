@@ -111,7 +111,7 @@ pub async fn run_check(args: CheckArgs, colors: &Stylesheet) -> Result<i32> {
     };
 
     let agentic: Option<Arc<dyn AgenticEvaluator>> =
-        match PiAgenticEvaluator::new(api_key.clone(), provider) {
+        match PiAgenticEvaluator::new(api_key.clone(), provider, stateless.clone()) {
             Ok(e) => Some(Arc::new(e)),
             Err(e) => {
                 eprintln!("Warning: agentic evaluator unavailable: {}", e);
