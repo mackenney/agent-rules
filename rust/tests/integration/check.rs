@@ -12,3 +12,82 @@ fn missing_api_key_exits_3() {
         .assert()
         .code(3);
 }
+
+/// `check --provider openrouter` without OPENROUTER_API_KEY must exit 3.
+#[test]
+fn missing_openrouter_api_key_exits_3() {
+    cmd()
+        .args([
+            "check",
+            "--provider",
+            "openrouter",
+            "--files",
+            "src/api/bad_controller.py",
+            "--repo",
+        ])
+        .arg(test_repo())
+        .env_remove("OPENROUTER_API_KEY")
+        .assert()
+        .code(3)
+        .stderr(predicates::str::contains("OPENROUTER_API_KEY"));
+}
+
+/// Model with '/' and provider=anthropic should show a helpful error.
+#[test]
+fn model_slash_guard_exits_3() {
+    cmd()
+        .args([
+            "check",
+            "--model",
+            "anthropic/claude-haiku-4-5",
+            "--files",
+            "src/api/bad_controller.py",
+            "--repo",
+        ])
+        .arg(test_repo())
+        .env("ANTHROPIC_API_KEY", "test-key")
+        .assert()
+        .code(3)
+        .stderr(predicates::str::contains("looks like an OpenRouter model"));
+}
+
+/// `check --help` should document the --provider flag.
+#[test]
+fn help_shows_provider_flag() {
+    cmd()
+        .args(["check", "--help"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("--provider"));
+}
+
+/// `check --provider openrouter` with a slash model must NOT trigger the slash guard.
+/// Should exit 3 for missing OPENROUTER_API_KEY, not the model slash guard.
+#[test]
+fn openrouter_slash_model_not_guarded() {
+    let output = cmd()
+        .args([
+            "check",
+            "--provider",
+            "openrouter",
+            "--model",
+            "anthropic/claude-3-5-haiku-20241022",
+            "--files",
+            "src/api/bad_controller.py",
+            "--repo",
+        ])
+        .arg(test_repo())
+        .env_remove("OPENROUTER_API_KEY")
+        .assert()
+        .code(3)
+        .stderr(predicates::str::contains("OPENROUTER_API_KEY"))
+        .get_output()
+        .clone();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("looks like an OpenRouter"),
+        "slash guard should not trigger for --provider openrouter: {}",
+        stderr
+    );
+}

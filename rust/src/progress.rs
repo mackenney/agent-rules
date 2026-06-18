@@ -13,11 +13,17 @@ use std::sync::Mutex;
 /// Methods are per-rule-call (one call = one rule × one file), not per-file.
 #[allow(dead_code)] // add_total and log reserved for dynamic total updates and trace logging
 pub trait ProgressReporter: Send + Sync {
+    /// Set the total number of calls expected
     fn set_total(&self, n: usize);
+    /// Increase the total call count (for dynamic totals)
     fn add_total(&self, n: usize);
+    /// Called immediately before a rule call begins
     fn on_call_start(&self, label: &str);
+    /// Called immediately after a rule call completes
     fn on_call_done(&self, label: &str);
+    /// Emit a log message without interrupting the progress bar
     fn log(&self, msg: &str);
+    /// Finish and clear the progress bar
     fn finish(&self);
 }
 
@@ -29,6 +35,7 @@ pub struct TtyProgress {
 }
 
 impl TtyProgress {
+    /// Creates a new TTY progress bar for the given total file count.
     pub fn new(total: usize) -> Self {
         let bar = ProgressBar::new(total as u64);
         bar.set_style(

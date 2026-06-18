@@ -2,7 +2,7 @@
 
 ## Status
 
-Not Started
+Complete
 
 ## Objective
 
@@ -51,9 +51,9 @@ Add OpenRouter as a second LLM provider for stateless evaluation. A new `--provi
 
 ## Steps
 
-- [ ] [step-01-foundation](./step-01-foundation.md) — Add `Provider` enum, `pub(crate)` retry constants, `get_api_key(provider)`, OpenRouter model default
-- [ ] [step-02-openrouter-client](./step-02-openrouter-client.md) — Create `openrouter.rs` with types, client struct, request building, response parsing, `StatelessEvaluator` impl
-- [ ] [step-03-cli-provider-flag](./step-03-cli-provider-flag.md) — Add `--provider` flag to `CheckArgs`, `ProviderArg` enum, model-slash guard
-- [ ] [step-04-wiring](./step-04-wiring.md) — Wire provider into `run_check()`, add `OpenRouterClient` import, fix cache key to include provider
-- [ ] [step-05-unit-tests](./step-05-unit-tests.md) — Inline unit tests for `openrouter.rs`: parsing, serialization, cache_control, NMC collapse
-- [ ] [step-06-integration-tests](./step-06-integration-tests.md) — Integration tests for provider CLI behavior; e2e test stubs gated on `OPENROUTER_API_KEY`
+- [x] [step-01-foundation](./step-01-foundation.md) — Add `Provider` enum, `pub(crate)` retry constants, `get_api_key(provider)`, OpenRouter model default (6c3c5d1)
+- [x] [step-02-openrouter-client](./step-02-openrouter-client.md) — Create `openrouter.rs` with types, client struct, request building, response parsing, `StatelessEvaluator` impl (b1d733d)
+- [x] [step-03-cli-provider-flag](./step-03-cli-provider-flag.md) — Add `--provider` flag to `CheckArgs`, `ProviderArg` enum, model-slash guard (feecbd0)
+- [x] [step-04-wiring](./step-04-wiring.md) — Wire provider into `run_check()`, add `OpenRouterClient` import, fix cache key to include provider (90395ef)
+- [x] [step-05-unit-tests](./step-05-unit-tests.md) — Inline unit tests for `openrouter.rs`: 17 tests covering parsing, serialization, cache_control, NMC collapse (eb71cda)
+- [x] [step-06-integration-tests](./step-06-integration-tests.md) — Integration tests for provider CLI behavior; e2e test stubs gated on `OPENROUTER_API_KEY` (115d972)

@@ -1,14 +1,73 @@
-#![allow(dead_code, clippy::too_many_arguments)]
-//! Evaluator protocols: StatelessEvaluator and AgenticEvaluator traits
+//! Evaluator protocols and implementations
 //!
-//! These traits abstract the LLM evaluation layer, allowing CheckInfra to
-//! work with any implementation (Anthropic, mock, etc.) without coupling.
+//! This module owns shared types (`LlmError`, `StatelessEvalOpts`, `AgenticEvalOpts`)
+//! and the two evaluator traits (`StatelessEvaluator`, `AgenticEvaluator`).
+//! Provider implementations live in submodules:
+//! - `anthropic` — Anthropic API client (direct HTTP, tool-use protocol)
+//! - `openrouter` — OpenRouter client (OpenAI-compatible chat completions)
+//! - `agentic` — Pi-based agentic evaluator (subprocess, needs-more-context escalation)
+
+#![allow(clippy::too_many_arguments)]
+
+mod agentic;
+mod anthropic;
+mod helpers;
+mod openrouter;
+
+pub use agentic::PiAgenticEvaluator;
+pub use anthropic::AnthropicClient;
+pub use openrouter::OpenRouterClient;
 
 use async_trait::async_trait;
 use std::time::Duration;
+use thiserror::Error;
 
-use crate::llm::LlmError;
 use crate::schema::{ContextHint, Rule, RuleVerdict};
+
+pub(crate) const MAX_RETRIES: u32 = 3;
+pub(crate) const RETRY_BASE_DELAY_MS: u64 = 1000;
+
+/// LLM-specific errors with retry classification
+#[derive(Debug, Error)]
+pub enum LlmError {
+    /// API rate limit exceeded (HTTP 429)
+    #[error("rate limited")]
+    RateLimit,
+
+    /// Non-retryable server error with status code
+    #[error("server error: {0}")]
+    ServerError(u16),
+
+    /// Request timed out
+    #[error("timeout")]
+    Timeout,
+
+    /// Authentication failure (invalid or missing API key)
+    #[error("auth error: {0}")]
+    Auth(String),
+
+    /// Network or HTTP request failure
+    #[error("request error: {0}")]
+    Request(String),
+
+    /// Failed to parse the API response body
+    #[error("failed to parse response: {0}")]
+    Parse(String),
+
+    /// All retry attempts exhausted without success
+    #[error("retries exhausted")]
+    Exhausted,
+}
+
+impl LlmError {
+    /// Returns true if this error is worth retrying
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            LlmError::RateLimit | LlmError::ServerError(_) | LlmError::Timeout
+        )
+    }
+}
 
 /// Options for stateless evaluation
 #[derive(Debug, Clone)]
@@ -74,6 +133,27 @@ pub trait StatelessEvaluator: Send + Sync {
         is_new_file: bool,
         opts: &StatelessEvalOpts,
     ) -> Result<RuleVerdict, LlmError>;
+    /// Normalize raw agentic output into a structured verdict
+    ///
+    /// Used by the agentic evaluator to extract a pass/fail verdict from
+    /// unstructured subprocess output. Implementations reuse their existing
+    /// HTTP client and retry infrastructure.
+    ///
+    /// The default returns an error; override in providers that support normalization.
+    async fn normalize(
+        &self,
+        raw_output: &str,
+        rule: &Rule,
+        file_path: &str,
+        model: &str,
+        timeout: Duration,
+        trace: bool,
+    ) -> Result<RuleVerdict, LlmError> {
+        let _ = (raw_output, rule, file_path, model, timeout, trace);
+        Err(LlmError::Request(
+            "normalize not supported by this evaluator".to_string(),
+        ))
+    }
 }
 
 /// Agentic evaluator trait — evaluates (file, rule) with filesystem read access
@@ -110,4 +190,20 @@ pub trait AgenticEvaluator: Send + Sync {
         repo_root: &std::path::Path,
         opts: &AgenticEvalOpts,
     ) -> Result<RuleVerdict, LlmError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::LlmError;
+
+    #[test]
+    fn test_error_retryable() {
+        assert!(LlmError::RateLimit.is_retryable());
+        assert!(LlmError::ServerError(500).is_retryable());
+        assert!(LlmError::Timeout.is_retryable());
+        assert!(!LlmError::Auth("unauthorized".into()).is_retryable());
+        assert!(!LlmError::Parse("bad json".into()).is_retryable());
+        assert!(!LlmError::Request("connection refused".into()).is_retryable());
+        assert!(!LlmError::Exhausted.is_retryable());
+    }
 }

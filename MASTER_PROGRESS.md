@@ -11,7 +11,6 @@ Stable
 ## In Progress
 
 - `openrouter-evaluator` — Add OpenRouter as second LLM provider (Rust): `--provider openrouter`, `OpenRouterClient`, cache key fix; [plan](plans/openrouter-evaluator/PROGRESS.md)
-
 ## Queued
 
 - `ignacio@llm/evaluator-protocol` — TypeScript evaluator protocol refactor: `StatelessEvaluator`/`AgenticEvaluator` interfaces extracted to `src/evaluator.ts`; needs rebase onto main before merge
@@ -24,6 +23,8 @@ Stable
 - `spec-unification` — merged SPEC.md + SPEC-evaluator-protocol.md into single canonical spec with evaluator protocol as first-class section; commit 80fedf1
 - `multi-impl-restructure` — TypeScript moved to `typescript/`, test-repo to root, shared layout established; commit 7fefd01
 - `rust-implementation` — full Rust reimplementation: all 8 plan steps, evaluator protocol, two-pass agentic routing, 86 tests (77 unit + 9 integration); commit 873313e
+- `rust-module-refactor` — restructured rust/src/: evaluator/ submodule (AnthropicClient, OpenRouterClient, PiAgenticEvaluator), commands/ submodule (check, cache, rules); commit 898ee73
+- `evaluator-refactor` — normalize() retry fix (inject Arc<dyn StatelessEvaluator>), shared helpers.rs (retry_with_backoff, parse_verdict_from_input, make_fail_verdict), -314 lines agentic.rs; commit 0c4ff72
 
 ## Known Gaps
 

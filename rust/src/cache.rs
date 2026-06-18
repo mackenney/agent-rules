@@ -15,28 +15,42 @@ use crate::schema::{FileVerdict, Rule};
 /// Cache entry stored on disk
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheEntry {
+    /// SHA-256 hash key identifying this cache entry
     pub cache_key: String,
+    /// Relative file path that was evaluated
     pub file_path: String,
+    /// Rule IDs included in this evaluation
     pub rule_ids: Vec<String>,
+    /// Model used for evaluation
     pub model: String,
+    /// Unix timestamp (seconds) when this entry was created
     pub created_at: f64,
+    /// Number of times this entry has been returned from cache
     pub hit_count: u64,
+    /// Cached evaluation result
     pub verdict: FileVerdict,
 }
 
 /// Cache statistics
 #[derive(Debug, Clone, Default)]
 pub struct CacheStats {
+    /// Total number of cache entries on disk
     pub total_entries: usize,
+    /// Total size of all cache entries in bytes
     pub total_size_bytes: u64,
+    /// Unix timestamp of the oldest entry, if any
     pub oldest_entry: Option<f64>,
+    /// Unix timestamp of the newest entry, if any
     pub newest_entry: Option<f64>,
+    /// Total cache hits across all entries
     pub total_hits: u64,
 }
 
 /// Trait for cache implementations
 pub trait Cache: Send + Sync {
+    /// Retrieve a cached verdict by key, returning `None` on miss
     fn get(&self, key: &str) -> Option<FileVerdict>;
+    /// Store a verdict under the given key
     fn put(
         &self,
         key: &str,
@@ -45,6 +59,7 @@ pub trait Cache: Send + Sync {
         file_path: &str,
         rule_ids: &[String],
     );
+    /// Derive a deterministic cache key for the given inputs
     fn key_for(
         &self,
         file_path: &str,
@@ -53,7 +68,9 @@ pub trait Cache: Send + Sync {
         rules: &[Rule],
         model: &str,
     ) -> String;
+    /// Return aggregate statistics for all entries
     fn stats(&self) -> Result<CacheStats>;
+    /// Delete all cache entries, returning the count deleted
     fn clear(&self) -> Result<usize>;
 }
 

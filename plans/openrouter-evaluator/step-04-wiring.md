@@ -180,7 +180,7 @@ Add after the `model` line in the hash computation:
     hasher.update(format!("provider:{}\n", provider));
 ```
 
-**Find all call sites** of `compute_cache_key` in `cache.rs` and add the `provider` parameter. Search for calls — they will be in `CacheManager::get()` and `CacheManager::put()` (or similar). These methods receive `model: &str` — they also need `provider: &str`.
+**Find all call sites** of `compute_cache_key` in `cache.rs` and add the `provider` parameter. The call sites are in `CacheManager::key_for` (around line 238) and `NullCache::key_for` (around line 277) — NOT in `get()` or `put()`. The `Cache` trait has a `key_for(...)` method; update its signature to accept `provider: &str`, then update both impls.
 
 Trace upward: `CacheManager` methods are called from `runner.rs` or wherever the cache is used. The `CheckConfig` now has `provider: Provider`. Pass `provider.as_str()` or similar.
 

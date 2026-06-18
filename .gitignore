@@ -9,3 +9,4 @@ artifacts/
 /progress.md
 .venv/
 .agent/
+libprobe.rlib

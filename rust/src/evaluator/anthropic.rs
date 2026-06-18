@@ -1,56 +1,19 @@
 //! Anthropic API client with retry logic
 //!
-//! Uses reqwest for HTTP, thiserror for typed errors that support retry classification.
+//! Uses reqwest for HTTP. Retry and error classification via `LlmError` (defined in the parent module).
 
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use thiserror::Error;
 
 use async_trait::async_trait;
 
-use crate::evaluator::{StatelessEvalOpts, StatelessEvaluator};
-use crate::prompt::{build_tool_schema, build_user_prompt, SYSTEM_PROMPT};
-use crate::schema::{ContextHint, Rule, RuleContext, RuleVerdict, Verdict};
+use super::helpers::{make_fail_verdict, parse_verdict_from_input, retry_with_backoff};
+use super::{LlmError, StatelessEvalOpts, StatelessEvaluator};
+use crate::prompt::{SYSTEM_PROMPT, build_tool_schema, build_user_prompt};
+use crate::schema::{Rule, RuleVerdict};
 
 const API_BASE_URL: &str = "https://api.anthropic.com";
 const API_VERSION: &str = "2023-06-01";
-const MAX_RETRIES: u32 = 3;
-const RETRY_BASE_DELAY_MS: u64 = 1000;
-
-/// LLM-specific errors with retry classification
-#[derive(Debug, Error)]
-pub enum LlmError {
-    #[error("rate limited")]
-    RateLimit,
-
-    #[error("server error: {0}")]
-    ServerError(u16),
-
-    #[error("timeout")]
-    Timeout,
-
-    #[error("auth error: {0}")]
-    Auth(String),
-
-    #[error("request error: {0}")]
-    Request(String),
-
-    #[error("failed to parse response: {0}")]
-    Parse(String),
-
-    #[error("retries exhausted")]
-    Exhausted,
-}
-
-impl LlmError {
-    /// Returns true if this error is worth retrying
-    pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            LlmError::RateLimit | LlmError::ServerError(_) | LlmError::Timeout
-        )
-    }
-}
 
 /// Anthropic API client
 pub struct AnthropicClient {
@@ -145,21 +108,10 @@ impl AnthropicClient {
         let response = match self.call_with_retry(&request, timeout).await {
             Ok(r) => r,
             Err(LlmError::Auth(msg)) => return Err(LlmError::Auth(msg)),
-            Err(_) => {
-                return Ok(RuleVerdict {
-                    rule_id: rule.id.clone(),
-                    rule_name: rule.name.clone(),
-                    verdict: Verdict::Fail,
-                    confidence: 0.0,
-                    reasoning: "LLM call failed".to_string(),
-                    severity: rule.severity,
-                    line_refs: vec![],
-                    line: None,
-                    cached: false,
-                    from_agentic: false,
-                    context_hint: None,
-                });
+            Err(LlmError::Exhausted) => {
+                return Ok(make_fail_verdict(rule, "LLM call failed after retries"));
             }
+            Err(e) => return Err(e),
         };
 
         self.parse_verdict(&response, rule)
@@ -170,21 +122,7 @@ impl AnthropicClient {
         request: &MessagesRequest<'_>,
         timeout: Duration,
     ) -> Result<MessagesResponse, LlmError> {
-        let mut last_error = LlmError::Exhausted;
-
-        for attempt in 0..MAX_RETRIES {
-            match self.call_once(request, timeout).await {
-                Ok(response) => return Ok(response),
-                Err(e) if e.is_retryable() && attempt < MAX_RETRIES - 1 => {
-                    let delay = RETRY_BASE_DELAY_MS * 2u64.pow(attempt);
-                    tokio::time::sleep(Duration::from_millis(delay)).await;
-                    last_error = e;
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        Err(last_error)
+        retry_with_backoff(|| self.call_once(request, timeout)).await
     }
 
     async fn call_once(
@@ -239,102 +177,12 @@ impl AnthropicClient {
         for block in &response.content {
             if block.type_ == "tool_use" && block.name.as_deref() == Some("submit_verdict") {
                 if let Some(input) = &block.input {
-                    let verdict_str = input
-                        .get("verdict")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("fail");
-
-                    let mut verdict = match verdict_str {
-                        "pass" => Verdict::Pass,
-                        "needs-more-context" => Verdict::NeedsMoreContext,
-                        _ => Verdict::Fail,
-                    };
-
-                    let confidence = input
-                        .get("confidence")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(0.5);
-
-                    let reasoning = input
-                        .get("reasoning")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    let reasoning = if verdict == Verdict::NeedsMoreContext
-                        && rule.context == RuleContext::Stateless
-                    {
-                        verdict = Verdict::Fail;
-                        format!(
-                            "{} [collapsed from needs-more-context: stateless rule]",
-                            reasoning.trim()
-                        )
-                    } else {
-                        reasoning
-                    };
-
-                    let line_refs: Vec<u64> = input
-                        .get("line_refs")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
-                        .unwrap_or_default();
-                    let line = line_refs.first().copied().map(|l| l as u32);
-                    let line_refs_u32: Vec<u32> = line_refs
-                        .iter()
-                        .filter_map(|&l| u32::try_from(l).ok())
-                        .collect();
-
-                    let context_hint =
-                        input
-                            .get("context_hint")
-                            .and_then(|v| v.as_object())
-                            .map(|obj| ContextHint {
-                                read_files: obj
-                                    .get("read_files")
-                                    .and_then(|v| v.as_array())
-                                    .map(|arr| {
-                                        arr.iter()
-                                            .filter_map(|v| v.as_str().map(String::from))
-                                            .collect()
-                                    })
-                                    .unwrap_or_default(),
-                                question: obj
-                                    .get("question")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string(),
-                            });
-
-                    return Ok(RuleVerdict {
-                        rule_id: rule.id.clone(),
-                        rule_name: rule.name.clone(),
-                        verdict,
-                        confidence,
-                        reasoning,
-                        severity: rule.severity,
-                        line_refs: line_refs_u32,
-                        line,
-                        cached: false,
-                        from_agentic: false,
-                        context_hint,
-                    });
+                    return Ok(parse_verdict_from_input(input, rule));
                 }
             }
         }
 
-        Ok(RuleVerdict {
-            rule_id: rule.id.clone(),
-            rule_name: rule.name.clone(),
-            verdict: Verdict::Fail,
-            confidence: 0.0,
-            reasoning: "No verdict received from LLM".to_string(),
-            severity: rule.severity,
-            line_refs: vec![],
-            line: None,
-            cached: false,
-            from_agentic: false,
-            context_hint: None,
-        })
+        Ok(make_fail_verdict(rule, "No verdict received from LLM"))
     }
 }
 
@@ -361,6 +209,104 @@ impl StatelessEvaluator for AnthropicClient {
             opts.timeout,
         )
         .await
+    }
+    async fn normalize(
+        &self,
+        raw_output: &str,
+        rule: &Rule,
+        file_path: &str,
+        model: &str,
+        timeout: Duration,
+        trace: bool,
+    ) -> Result<RuleVerdict, LlmError> {
+        let system = "Extract a structured rule evaluation verdict from the agent's analysis. \
+                      The agent has already done the investigation.";
+
+        let user_content = format!(
+            "File: {}\nRule: {} \u{2014} {}\n\nAgent analysis:\n{}\n\nExtract the verdict.",
+            file_path,
+            rule.id,
+            rule.name,
+            &raw_output[..raw_output.len().min(8000)]
+        );
+
+        let tool = serde_json::json!({
+            "name": "submit_verdict",
+            "description": "Submit the extracted verdict",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["pass", "fail"]
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
+                    },
+                    "reasoning": {
+                        "type": "string"
+                    },
+                    "line_refs": {
+                        "type": "array",
+                        "items": {"type": "integer"}
+                    }
+                },
+                "required": ["verdict", "confidence", "reasoning", "line_refs"]
+            }
+        });
+
+        let request = MessagesRequest {
+            model,
+            max_tokens: 1024,
+            system,
+            messages: vec![Message {
+                role: "user",
+                content: &user_content,
+            }],
+            tools: vec![tool],
+            tool_choice: ToolChoice {
+                type_: "tool",
+                name: Some("submit_verdict"),
+                disable_parallel_tool_use: None,
+            },
+        };
+
+        if trace {
+            eprintln!("[TRACE] Normalization request for {}", file_path);
+        }
+
+        let response = match self.call_with_retry(&request, timeout).await {
+            Ok(r) => r,
+            Err(LlmError::Exhausted) => {
+                return Ok(make_fail_verdict(
+                    rule,
+                    "Normalization failed after retries",
+                ));
+            }
+            Err(e) => return Err(e),
+        };
+
+        if trace {
+            eprintln!("[TRACE] Normalization response: {:?}", response);
+        }
+
+        for block in &response.content {
+            if block.type_ == "tool_use" && block.name.as_deref() == Some("submit_verdict") {
+                if let Some(input) = &block.input {
+                    let mut verdict = parse_verdict_from_input(input, rule);
+                    verdict.from_agentic = true;
+                    verdict.context_hint = None;
+                    return Ok(verdict);
+                }
+            }
+        }
+
+        Ok(make_fail_verdict(
+            rule,
+            "No verdict received from normalization",
+        ))
     }
 }
 
@@ -413,18 +359,7 @@ struct ContentBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema::{RuleContext, Severity};
-
-    #[test]
-    fn test_llm_error_retryable() {
-        assert!(LlmError::RateLimit.is_retryable());
-        assert!(LlmError::ServerError(500).is_retryable());
-        assert!(LlmError::Timeout.is_retryable());
-        assert!(!LlmError::Auth("unauthorized".into()).is_retryable());
-        assert!(!LlmError::Parse("bad json".into()).is_retryable());
-        assert!(!LlmError::Request("connection refused".into()).is_retryable());
-        assert!(!LlmError::Exhausted.is_retryable());
-    }
+    use crate::schema::{RuleContext, Severity, Verdict};
 
     #[test]
     fn test_parse_verdict_missing_tool_use() {

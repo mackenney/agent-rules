@@ -33,6 +33,7 @@ pub struct CheckInfra {
 }
 
 impl CheckInfra {
+    /// Constructs a new [`CheckInfra`], wiring cache and progress reporter.
     pub fn new(
         stateless: Arc<dyn StatelessEvaluator>,
         agentic: Option<Arc<dyn AgenticEvaluator>>,
@@ -53,6 +54,7 @@ impl CheckInfra {
         })
     }
 
+    /// Attaches a progress reporter, replacing the default null reporter.
     pub fn with_progress(mut self, progress: Arc<dyn ProgressReporter>) -> Self {
         self.progress = Some(progress);
         self
